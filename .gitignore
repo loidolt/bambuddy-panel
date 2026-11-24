@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+platformio_override.ini
+shots/
+.DS_Store
+__pycache__/
