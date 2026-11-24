@@ -16,16 +16,17 @@ static const int MAX_TASKS = 12;
 
 struct Snapshot {
   uint32_t seq = 0;        // goes up on every poll; the UI redraws when it changes
+  int printerId = 0;       // the Bambuddy printer this panel shows
   bool reachable = false;  // Bambuddy answered the last status request
   int httpCode = 0;        // last status HTTP code (or a negative client error)
 
   bool connected = false;  // Bambuddy is connected to the printer
   char name[24] = "";
-  char state[16] = "";     // RUNNING, PAUSE, FINISH, FAILED, IDLE, PREPARE, ...
+  char state[16] = "";     // RUNNING, PAUSE, FINISH, FAILED, IDLE, PREPARE, SLICING, ...
   char job[64] = "";
   char stage[32] = "";     // current stage name, when the printer reports one
   float progress = 0;      // 0..100
-  int remainingMin = 0;    // assumed minutes, as the printer reports it
+  int remainingMin = 0;    // minutes, as the printer reports it
   int layer = 0;
   int totalLayers = 0;
   float nozzle = 0, bed = 0, chamber = 0;
@@ -34,11 +35,17 @@ struct Snapshot {
   int errorCount = 0;
   char error[96] = "";     // first HMS error, description or code
 
-  int queued = 0;          // pending queue items for this printer
+  // Bambuddy's "require plate clear" setting. Its plate-clear gate is only shown when this is
+  // on; until the setting has been read the panel assumes it is.
+  bool requirePlateClear = true;
+
+  int queued = 0;          // pending queue items for this printer (its own and "any <model>")
   int nextId = 0;          // first pending item, 0 when none
   bool nextManual = false; // it waits for a manual start
+  bool nextAssigned = false; // it is assigned to this printer, not to "any <model>"
   char nextName[64] = "";
   int nextSeconds = 0;
+  int held = 0;            // items Bambuddy skipped because the previous print failed
 
   // Bambuddy's "ask for outcome": the last print waits for a good / bad answer.
   bool verdictPending = false;
@@ -61,15 +68,23 @@ enum class Command : uint8_t {
   Resume,
   Stop,
   ClearPlate,
-  ToggleLight,
+  SetLight,      // arg: 1 on, 0 off
   ClearErrors,
   ResumeQueue,
-  StartNext,
-  VerdictGood,
-  VerdictReject,
-  PerformTask, // arg: the task's id
+  StartNext,     // arg: the queue item shown on screen
+  VerdictGood,   // arg: archive id, arg2: run id (0 when none)
+  VerdictReject, // as VerdictGood
+  PerformTask,   // arg: the task's id
 };
 
-void bambuddy_begin();               // starts the background task; WiFi must be up
-void bambuddy_send(Command c, int arg = 0); // queues a command; returns at once
+// A command and the ids it acts on, as the screen showed them when it was pressed.
+struct Job {
+  Command cmd;
+  int arg;
+  int arg2;
+};
+
+void bambuddy_begin(); // starts the background task; call once, after WiFi is set up
+// Queues a command and returns at once. False when the queue is full.
+bool bambuddy_send(Command c, int arg = 0, int arg2 = 0);
 void bambuddy_snapshot(Snapshot &out);

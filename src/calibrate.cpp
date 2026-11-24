@@ -55,8 +55,11 @@ static bool sample(long &outX, long &outY)
   }
 }
 
-bool calibrate_run()
+bool calibrate_run(bool haveSaved)
 {
+  const char *keeping = haveSaved ? "Keeping the saved calibration."
+                                  : "Using standard values.\nHold the screen at start-up to calibrate.";
+  char buf[120];
   static const int target[4][2] = {
       {INSET, INSET},
       {SCREEN_W - 1 - INSET, INSET},
@@ -71,8 +74,9 @@ bool calibrate_run()
     for (int i = 0; i < 4; i++) {
       ui_calibrate(i + 1, 4, target[i][0], target[i][1]);
       if (!sample(rx[i], ry[i])) {
-        ui_message("Calibration", "No touch. Keeping the old calibration.");
-        delay(1500);
+        snprintf(buf, sizeof(buf), "No touch. %s", keeping);
+        ui_message("Calibration", buf);
+        delay(2500);
         return false;
       }
       Serial.printf("[calibrate] cross %d raw %ld,%ld\n", i + 1, rx[i], ry[i]);
@@ -90,7 +94,8 @@ bool calibrate_run()
     ui_message("Calibration", "Those taps didn't line up.\nTry again.");
     delay(1800);
   }
-  ui_message("Calibration", "Giving up. Keeping the old calibration.");
-  delay(1500);
+  snprintf(buf, sizeof(buf), "Giving up. %s", keeping);
+  ui_message("Calibration", buf);
+  delay(2500);
   return false;
 }

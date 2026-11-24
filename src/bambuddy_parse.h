@@ -9,8 +9,20 @@ void status_filter(JsonDocument &filter);
 void queue_filter(JsonDocument &filter);
 void last_print_filter(JsonDocument &filter);
 void tasks_filter(JsonDocument &filter);
+void settings_filter(JsonDocument &filter);
 
 void parse_status(JsonDocument &doc, Snapshot &s); // GET /printers/{id}/status
-void parse_queue(JsonDocument &doc, Snapshot &s);  // GET /queue/?status=pending&printer_id={id}
+// GET /queue/?status=pending,skipped&printer_id={id}
+void parse_queue(JsonDocument &doc, int printerId, Snapshot &s);
 void parse_tasks(JsonDocument &doc, Snapshot &s);  // GET /maintenance/printers/{id}
 void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s); // GET /archives/last-per-printer
+void parse_settings(JsonDocument &doc, Snapshot &s); // GET /settings/
+
+// The message Bambuddy's scheduler puts on queue items it skips after a failed print; the
+// "resume queue" request puts exactly these back.
+extern const char *const QUEUE_GATE_MESSAGE;
+
+// Copies UTF-8 text as plain ASCII, which is all the panel's fonts can draw: accented Latin
+// letters lose their accents (e -> e, ss for the sharp s), anything else becomes '?'.
+// Never cuts a character in half.
+void copy_ascii(char *dst, size_t size, const char *src);

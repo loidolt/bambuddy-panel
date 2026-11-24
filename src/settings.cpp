@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "bambuddy_api.h"
 #include <Preferences.h>
 
 Settings settings;
@@ -17,9 +18,11 @@ void settings_load()
 
 void settings_save()
 {
-  settings.url.trim();
+  char url[128];
+  snprintf(url, sizeof(url), "%s", settings.url.c_str());
+  normalize_url(url, sizeof(url));
+  settings.url = url;
   settings.key.trim();
-  while (settings.url.endsWith("/")) settings.url.remove(settings.url.length() - 1);
 
   Preferences p;
   p.begin(NS, false);

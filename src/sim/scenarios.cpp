@@ -1,4 +1,5 @@
 #include "scenarios.h"
+#include "bambuddy_parse.h"
 
 #include <cstdio>
 
@@ -30,6 +31,7 @@ static Snapshot base()
   add_task(s, "Clean Nozzle/Hotend", 0, false, 42.9f);
   add_task(s, "Check Belt Tension", 0, false, 142.9f);
   add_task(s, "Check PTFE Tube", 0, false, 442.9f);
+  s.printerId = 1;
   s.reachable = true;
   s.httpCode = 200;
   s.connected = true;
@@ -46,6 +48,7 @@ static void queue_next(Snapshot &s, const char *name, int seconds, int queued, b
   s.nextId = 42;
   s.queued = queued;
   s.nextManual = manual;
+  s.nextAssigned = true;
   s.nextSeconds = seconds;
   SET(s.nextName, name);
 }
@@ -80,6 +83,15 @@ static Snapshot printing_long_text()
   s.bed = 110;
   s.chamber = 60;
   queue_next(s, "Another_extremely_long_file_name_for_the_next_print_plate_3", 14 * 3600, 5, false);
+  return s;
+}
+
+// Names as Bambuddy sends them, through the same ASCII conversion the panel uses.
+static Snapshot printing_accents()
+{
+  Snapshot s = printing();
+  copy_ascii(s.name, sizeof(s.name), "Werkstatt Süd");
+  copy_ascii(s.job, sizeof(s.job), "Drachen_für_Jürgen_Ø40_plate_1");
   return s;
 }
 
@@ -151,7 +163,28 @@ static Snapshot error()
   SET(s.job, "Fidget_gears_plate_2");
   s.errorCount = 2;
   SET(s.error, "The nozzle is clogged. Please check the hotend and extruder.");
-  queue_next(s, "Articulated_dragon_plate_1", 3 * 3600 + 12 * 60, 1, false);
+  s.held = 1; // the job after it, skipped because this print failed
+  return s;
+}
+
+// With Auto Power Off the printer is switched off by the time the plate wants clearing.
+static Snapshot finished_printer_off()
+{
+  Snapshot s = finished();
+  s.connected = false;
+  s.light = false;
+  s.nozzle = s.bed = s.chamber = 0;
+  s.nextId = 0;
+  s.queued = 0;
+  return s;
+}
+
+// Bambuddy skipped two jobs because the print before them failed.
+static Snapshot queue_held()
+{
+  Snapshot s = base();
+  SET(s.job, "Fidget_gears_plate_2");
+  s.held = 2;
   return s;
 }
 
@@ -172,6 +205,15 @@ static Snapshot idle()
   return s;
 }
 
+// A printer without a chamber sensor.
+static Snapshot idle_no_chamber()
+{
+  Snapshot s = idle();
+  SET(s.name, "A1 mini");
+  s.chamber = 0;
+  return s;
+}
+
 static Snapshot printer_offline()
 {
   Snapshot s = base();
@@ -184,6 +226,7 @@ static Snapshot printer_offline()
 static Snapshot offline()
 {
   Snapshot s;
+  s.printerId = 1;
   s.httpCode = -1;
   return s;
 }
@@ -191,6 +234,7 @@ static Snapshot offline()
 static Snapshot key_refused()
 {
   Snapshot s;
+  s.printerId = 1;
   s.httpCode = 401;
   return s;
 }
@@ -206,15 +250,19 @@ static Snapshot toast()
 const Scenario scenarios[] = {
     {"printing", printing},
     {"printing-long-text", printing_long_text},
+    {"printing-accents", printing_accents},
     {"preparing", preparing},
     {"paused", paused},
     {"paused-error", paused_error},
     {"verdict", verdict},
     {"finished", finished},
     {"failed", failed},
+    {"finished-printer-off", finished_printer_off},
     {"error", error},
     {"ready", ready},
     {"idle", idle},
+    {"idle-no-chamber", idle_no_chamber},
+    {"queue-held", queue_held},
     {"printer-offline", printer_offline},
     {"offline", offline},
     {"key-refused", key_refused},
