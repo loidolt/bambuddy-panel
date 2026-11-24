@@ -1,0 +1,51 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO and SDL2
+        run: |
+          pip install platformio
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+
+      - name: Unit tests
+        run: pio test -e test
+
+      - name: Icons are up to date
+        run: |
+          python3 tools/make_icons.py
+          git diff --exit-code src/icons.c
+
+      - name: Firmware
+        run: pio run -e cyd-st7789 -e cyd-ili9341
+
+      - name: Simulator screenshots
+        run: ./tools/shots.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: .pio/build/cyd-*/firmware.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots/*.png
