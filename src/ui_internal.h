@@ -17,11 +17,33 @@ struct Hold {
   bool fired = false;
 };
 
-lv_obj_t *ui_box(lv_obj_t *parent);
+// ---- sizes (ui_layout.cpp)
+//
+// The screens are laid out in units, not pixels. A 320x240 panel has one pixel per unit; any
+// other screen gets as many pixels per unit as fit, and is then at least 320 units wide and
+// 240 tall. So a position is written as on the 320x240 panel, measured from whichever edge the
+// thing belongs to (ui.uw - 10 for "10 from the right"), and px() turns it into pixels.
+// Landscape screens are what this is drawn for; a portrait one works but wastes its height.
+struct UiMetrics {
+  int w, h;   // the screen in pixels
+  int uw, uh; // the screen in units: 320 x 240 or more
+  int scale;  // pixels per unit, times 256
+  // Text of 14, 20 and 28 units: the nearest size that is built in (see [lvgl] in platformio.ini).
+  const lv_font_t *small, *medium, *large;
+};
+extern UiMetrics ui;
+
+void ui_layout_begin(int w, int h); // once, before anything is drawn
+int px(int units);
+
+// ---- building blocks (ui.cpp). Positions and sizes are in units.
+lv_obj_t *ui_box(lv_obj_t *parent); // fills the screen
 lv_obj_t *ui_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int x, int y, int w);
 // A button without the theme's shadow and press-grow (which the parent would clip).
 lv_obj_t *ui_button(lv_obj_t *parent, uint32_t color, int x, int y, int w, int h, const char *text,
                     lv_obj_t **textOut = nullptr);
+// An icon, in the given colour and scaled with the screen. Icons are drawn for 1 px per unit.
+lv_obj_t *ui_icon(lv_obj_t *parent, const lv_image_dsc_t *icon, uint32_t color);
 
 // Sends a command; when the queue is full, says so instead of dropping it silently.
 void ui_send(Command c, int arg = 0, int arg2 = 0);

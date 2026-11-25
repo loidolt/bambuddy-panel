@@ -118,13 +118,17 @@ void setup()
   TouchCal cal;
   bool haveCal = settings_load_touch(cal);
   if (haveCal) display_set_touch_cal(cal);
-  bool calibrate = !haveCal; // a new panel calibrates on first boot
+  const bool resistive = display_needs_calibration();
+  bool calibrate = resistive && !haveCal; // a new resistive panel calibrates on first boot
 
-  // A touch during the first two seconds asks for setup. Which one is chosen by how long
-  // the finger stays, not where it is, so this works even when the calibration is far off.
+  // A touch during the first two seconds asks for setup. On a resistive panel, which setup is
+  // chosen by how long the finger stays, not where it is, so this works even when the
+  // calibration is far off.
   bool touched = false, force = false;
   for (uint32_t t = millis(); millis() - t < 2000 && !touched; delay(20)) touched = display_touched();
-  if (touched) {
+  if (touched && !resistive) {
+    force = true;
+  } else if (touched) {
     ui_message("Setup", "Let go now for WiFi and Bambuddy setup.\nKeep holding 4 seconds for touch calibration.");
     uint32_t t = millis(), lastDown = t;
     while (millis() - t < 4000 && millis() - lastDown < 300) { // 300 ms rides out a shaky finger

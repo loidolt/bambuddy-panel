@@ -1,9 +1,10 @@
-// Desktop simulator: runs the panel's real UI code in a 320x240 window.
+// Desktop simulator: runs the panel's real UI code in a window the size of a panel's screen.
 //
 //   program                 interactive, made-up states (Left/Right to switch, Q to quit)
 //   program --live          interactive, read-only status from a real Bambuddy
 //                           (BAMBUDDY_URL, BAMBUDDY_KEY, BAMBUDDY_PRINTER in the environment)
 //   program --shots <dir>   no window; writes one .bmp per made-up state
+//   --size <W>x<H>          with any of the above: another screen than 320x240, e.g. 480x320
 //
 // Buttons work with the mouse. Commands change the made-up state and print the request the
 // panel would send; nothing is ever sent anywhere, in live mode either.
@@ -19,16 +20,17 @@
 #include <chrono>
 #include <cctype>
 #include <string>
+#include <vector>
 
 #include "bambuddy_api.h"
 #include "bambuddy_parse.h"
-#include "board.h"
 #include "display.h"
 #include "poller.h"
 #include "scenarios.h"
 #include "ui.h"
 
 static Snapshot cur;
+static int screenW = 320, screenH = 240; // --size
 static bool live = false;
 static bool ledR, ledG, ledB;
 
@@ -184,16 +186,15 @@ static Poller poller;
 
 // ---------------------------------------------------------------- screenshots
 
-alignas(4) static uint8_t frame[SCREEN_W * SCREEN_H * 2];
 // As on the panel: LVGL draws a tenth of the screen at a time, and each strip is "sent" to
-// the frame, so strip rendering gets exercised too.
-alignas(4) static uint8_t strip[SCREEN_W * SCREEN_H / 10 * 2];
+// the frame, so strip rendering gets exercised too. Both hold 16-bit pixels.
+static std::vector<uint16_t> frame, strip;
 
 static void flush_strip(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
   int w = lv_area_get_width(a);
   for (int y = a->y1; y <= a->y2; y++)
-    memcpy(frame + (y * SCREEN_W + a->x1) * 2, px + (y - a->y1) * w * 2, w * 2);
+    memcpy(&frame[y * screenW + a->x1], px + (y - a->y1) * w * 2, w * 2);
   lv_display_flush_ready(d);
 }
 
@@ -201,27 +202,28 @@ static bool write_bmp(const std::string &path)
 {
   FILE *f = fopen(path.c_str(), "wb");
   if (!f) return false;
-  const uint32_t row = SCREEN_W * 3, size = 54 + row * SCREEN_H;
+  const uint32_t row = (screenW * 3 + 3) & ~3u, size = 54 + row * screenH; // rows pad to 4 bytes
   uint8_t h[54] = {'B', 'M'};
   auto put = [&](int at, uint32_t v) { memcpy(h + at, &v, 4); };
   put(2, size);
   put(10, 54);
   put(14, 40);
-  put(18, SCREEN_W);
-  put(22, SCREEN_H);
+  put(18, screenW);
+  put(22, screenH);
   h[26] = 1;
   h[28] = 24;
-  put(34, row * SCREEN_H);
+  put(34, row * screenH);
   fwrite(h, 1, 54, f);
 
-  const uint16_t *px = (const uint16_t *)frame;
-  for (int y = SCREEN_H - 1; y >= 0; y--) {
-    for (int x = 0; x < SCREEN_W; x++) {
-      uint16_t p = px[y * SCREEN_W + x];
+  const uint8_t pad[3] = {0, 0, 0};
+  for (int y = screenH - 1; y >= 0; y--) {
+    for (int x = 0; x < screenW; x++) {
+      uint16_t p = frame[y * screenW + x];
       uint8_t r = (p >> 11) & 31, g = (p >> 5) & 63, b = p & 31;
       uint8_t bgr[3] = {(uint8_t)(b << 3 | b >> 2), (uint8_t)(g << 2 | g >> 4), (uint8_t)(r << 3 | r >> 2)};
       fwrite(bgr, 1, 3, f);
     }
+    fwrite(pad, 1, row - screenW * 3, f);
   }
   fclose(f);
   return true;
@@ -273,20 +275,55 @@ static void release()
 }
 
 // A quick tap, then a redraw as the panel's loop would do it.
-static void tap(lv_display_t *disp, int x, int y)
+static void tap(lv_display_t *disp, lv_point_t at)
 {
-  press(disp, x, y, 120);
+  press(disp, at.x, at.y, 120);
   fingerDown = false;
-  spin(120);
+  spin(400); // until the button has faded back, so the picture doesn't depend on timing
   ui_update(cur);
   lv_refr_now(disp);
 }
 
+// The first button on show under `o` whose label has `text` in it; with no text, the first
+// that holds an icon. Buttons are looked up by what they say, not where they are, so the
+// screenshots work on a screen of any size.
+static lv_obj_t *find_button(lv_obj_t *o, const char *text)
+{
+  if (lv_obj_check_type(o, &lv_button_class) && lv_obj_is_visible(o)) {
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+      lv_obj_t *c = lv_obj_get_child(o, i);
+      if (text ? lv_obj_check_type(c, &lv_label_class) && strstr(lv_label_get_text(c), text) != nullptr
+               : lv_obj_check_type(c, &lv_image_class))
+        return o;
+    }
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+    if (lv_obj_t *found = find_button(lv_obj_get_child(o, i), text)) return found;
+  return nullptr;
+}
+
+// The middle of that button. Stops the run when the screen has no such button: the
+// screenshots would be of something else than their names say.
+static lv_point_t button(const char *text)
+{
+  lv_obj_update_layout(lv_screen_active());
+  lv_obj_t *b = find_button(lv_screen_active(), text);
+  if (!b) {
+    fprintf(stderr, "no button \"%s\" on the screen\n", text ? text : "(icon)");
+    exit(1);
+  }
+  lv_area_t a;
+  lv_obj_get_coords(b, &a);
+  return {(a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2};
+}
+
 static int run_shots(const std::string &dir)
 {
-  lv_display_t *disp = lv_display_create(SCREEN_W, SCREEN_H);
+  frame.resize(screenW * screenH);
+  strip.resize(screenW * (screenH / 10));
+  lv_display_t *disp = lv_display_create(screenW, screenH);
   lv_display_set_flush_cb(disp, flush_strip);
-  lv_display_set_buffers(disp, strip, nullptr, sizeof(strip), LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_buffers(disp, strip.data(), nullptr, strip.size() * 2, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_indev_t *indev = lv_indev_create(); // the UI asks whether a finger is down
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, [](lv_indev_t *, lv_indev_data_t *d) {
@@ -311,14 +348,14 @@ static int run_shots(const std::string &dir)
   cur = scenarios[0].make();
   cur.seq = scenarioCount + 2;
   ui_update(cur);
-  tap(disp, 165, 19);
+  tap(disp, button(nullptr)); // the wrench
   if (!save(dir, "maintenance")) return 1;
-  tap(disp, 268, 24);
+  tap(disp, button("More"));
   if (!save(dir, "maintenance-page-2")) return 1;
-  tap(disp, 48, 24);
+  tap(disp, button("Back"));
   if (!save(dir, "maintenance-closed")) return 1;
 
-  ui_calibrate(2, 4, SCREEN_W - 21, 20);
+  ui_calibrate(2, 4, screenW - 1 - screenH / 12, screenH / 12); // as calibrate.cpp places it
   if (!save(dir, "calibrate")) return 1;
 
   // Pressed buttons: a tap button and a hold button, on the first scenario.
@@ -326,13 +363,15 @@ static int run_shots(const std::string &dir)
   cur.seq = scenarioCount + 3;
   ui_update(cur);
   lv_refr_now(disp);
-  press(disp, 60, 205, 300);
+  lv_point_t at = button("Pause");
+  press(disp, at.x, at.y, 300);
   if (!save(dir, "pressed-tap")) return 1;
   release();
   cur = scenarios[0].make(); // the tap paused the made-up print; start over
   cur.seq = 1000;
   spin(50);
-  press(disp, 178, 205, 600);
+  at = button("Hold to stop");
+  press(disp, at.x, at.y, 600);
   if (!save(dir, "pressed-hold")) return 1;
   release();
 
@@ -341,7 +380,7 @@ static int run_shots(const std::string &dir)
     if (!strcmp(scenarios[i].name, "verdict")) cur = scenarios[i].make();
   cur.seq = 2000;
   spin(TOAST_WAIT_MS);
-  tap(disp, 280, 170);
+  tap(disp, button("Later"));
   spin(50);
   lv_refr_now(disp);
   if (!save(dir, "verdict-later")) return 1;
@@ -383,8 +422,8 @@ static void update_title(lv_display_t *disp)
 
 static int run_window()
 {
-  lv_display_t *disp = lv_sdl_window_create(SCREEN_W, SCREEN_H);
-  lv_sdl_window_set_zoom(disp, 2);
+  lv_display_t *disp = lv_sdl_window_create(screenW, screenH);
+  lv_sdl_window_set_zoom(disp, screenW <= 480 ? 2 : 1); // small panels are shown at 2x
   lv_sdl_mouse_create();
   ui_begin();
 
@@ -418,8 +457,10 @@ int main(int argc, char **argv)
     std::string a = argv[i];
     if (a == "--live") live = true;
     else if (a == "--shots" && i + 1 < argc) shots = argv[++i];
+    else if (a == "--size" && i + 1 < argc && sscanf(argv[i + 1], "%dx%d", &screenW, &screenH) == 2 &&
+             screenW >= 160 && screenW <= 1920 && screenH >= 120 && screenH <= 1080) i++;
     else {
-      fprintf(stderr, "usage: %s [--live | --shots <dir>]\n", argv[0]);
+      fprintf(stderr, "usage: %s [--live | --shots <dir>] [--size <W>x<H>]\n", argv[0]);
       return 2;
     }
   }

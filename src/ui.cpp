@@ -2,7 +2,6 @@
 // is decided in ui_logic.cpp; the maintenance screen lives in ui_tasks.cpp.
 #include "ui.h"
 #include "bambuddy_api.h"
-#include "board.h"
 #include "display.h"
 #include "icons.h"
 #include "ui_internal.h"
@@ -37,7 +36,7 @@ lv_obj_t *ui_box(lv_obj_t *parent)
 {
   lv_obj_t *b = lv_obj_create(parent);
   lv_obj_remove_style_all(b);
-  lv_obj_set_size(b, SCREEN_W, SCREEN_H);
+  lv_obj_set_size(b, ui.w, ui.h);
   lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
   return b;
 }
@@ -47,8 +46,8 @@ lv_obj_t *ui_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, int 
   lv_obj_t *l = lv_label_create(parent);
   lv_obj_set_style_text_font(l, font, 0);
   lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
-  lv_obj_set_pos(l, x, y);
-  lv_obj_set_width(l, w);
+  lv_obj_set_pos(l, px(x), px(y));
+  lv_obj_set_width(l, px(w));
   lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
   lv_label_set_text(l, "");
   return l;
@@ -66,15 +65,15 @@ static void plain_button_style(lv_obj_t *b)
 lv_obj_t *ui_button(lv_obj_t *parent, uint32_t color, int x, int y, int w, int h, const char *text, lv_obj_t **textOut)
 {
   lv_obj_t *b = lv_button_create(parent);
-  lv_obj_set_pos(b, x, y);
-  lv_obj_set_size(b, w, h);
+  lv_obj_set_pos(b, px(x), px(y));
+  lv_obj_set_size(b, px(w), px(h));
   lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
-  lv_obj_set_style_radius(b, 6, 0);
+  lv_obj_set_style_radius(b, px(6), 0);
   lv_obj_set_style_pad_all(b, 0, 0);
   plain_button_style(b);
   if (text) {
     lv_obj_t *l = lv_label_create(b);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(l, ui.small, 0);
     lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(l, text);
@@ -82,6 +81,19 @@ lv_obj_t *ui_button(lv_obj_t *parent, uint32_t color, int x, int y, int w, int h
     if (textOut) *textOut = l;
   }
   return b;
+}
+
+lv_obj_t *ui_icon(lv_obj_t *parent, const lv_image_dsc_t *icon, uint32_t color)
+{
+  lv_obj_t *img = lv_image_create(parent);
+  lv_image_set_src(img, icon);
+  lv_obj_set_style_image_recolor(img, lv_color_hex(color), 0);
+  lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+  if (ui.scale != 256) { // stretched to its size on this screen; untouched at 1 px per unit
+    lv_obj_set_size(img, px(icon->header.w), px(icon->header.h));
+    lv_image_set_inner_align(img, LV_IMAGE_ALIGN_STRETCH);
+  }
+  return img;
 }
 
 static void show_toast(const char *text)
@@ -191,14 +203,10 @@ static void verdict_button(const lv_image_dsc_t *icon, const char *text, uint32_
   lv_obj_add_event_cb(b, verdict_cb, LV_EVENT_CLICKED, (void *)(intptr_t)answer);
 
   if (icon) {
-    lv_obj_t *img = lv_image_create(b);
-    lv_image_set_src(img, icon);
-    lv_obj_set_style_image_recolor(img, lv_color_hex(C_TEXT), 0);
-    lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
-    lv_obj_center(img);
+    lv_obj_center(ui_icon(b, icon, C_TEXT));
   } else {
     lv_obj_t *l = lv_label_create(b);
-    lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(l, ui.small, 0);
     lv_obj_set_style_text_color(l, lv_color_hex(C_TEXT), 0);
     lv_label_set_text(l, text);
     lv_obj_center(l);
@@ -207,66 +215,77 @@ static void verdict_button(const lv_image_dsc_t *icon, const char *text, uint32_
 
 // ---------------------------------------------------------------- building the screens
 
+// The calibration cross: odd sizes in pixels, so it has a centre pixel.
+#define CROSS_LEN (px(33) | 1)
+#define CROSS_THICK (px(3) | 1)
+
+// A row of buttons side by side, sharing the width.
+static lv_obj_t *button_row(lv_obj_t *parent, int x, int y, int w, int h)
+{
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_pos(row, px(x), px(y));
+  lv_obj_set_size(row, px(w), px(h));
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(row, px(8), 0);
+  lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  return row;
+}
+
 void ui_begin()
 {
   lv_obj_t *scr = lv_screen_active();
+  ui_layout_begin(lv_display_get_horizontal_resolution(nullptr), lv_display_get_vertical_resolution(nullptr));
   lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
   lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  // --- status screen
+  // Everything below is in units (see ui_internal.h): 320 x 240 on the smallest screen.
+  const int W = ui.uw, H = ui.uh;
+  const int wide = W - 20;       // the full width, inside a margin of 10
+  const int mid = (H - 240) / 2; // moves a screen's centred text down on a taller screen
+
+  // --- status screen: name, wrench (ui_tasks.cpp) and state chip across the top
   mainBox = ui_box(scr);
-  lblName = ui_label(mainBox, &lv_font_montserrat_20, C_TEXT, 10, 8, 128);
-  lblState = ui_label(mainBox, &lv_font_montserrat_14, C_TEXT, 190, 8, 120);
+  lblName = ui_label(mainBox, ui.medium, C_TEXT, 10, 8, W - 192);
+  lblState = ui_label(mainBox, ui.small, C_TEXT, W - 130, 8, 120);
   lv_obj_set_style_text_align(lblState, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_bg_opa(lblState, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(lblState, 6, 0);
-  lv_obj_set_style_pad_ver(lblState, 4, 0);
+  lv_obj_set_style_radius(lblState, px(6), 0);
+  lv_obj_set_style_pad_ver(lblState, px(4), 0);
 
-  lblJob = ui_label(mainBox, &lv_font_montserrat_14, C_TEXT, 10, 42, 300);
+  lblJob = ui_label(mainBox, ui.small, C_TEXT, 10, 42, wide);
 
   bar = lv_bar_create(mainBox);
-  lv_obj_set_pos(bar, 10, 66);
-  lv_obj_set_size(bar, 300, 16);
+  lv_obj_set_pos(bar, px(10), px(66));
+  lv_obj_set_size(bar, px(wide), px(16));
   lv_bar_set_range(bar, 0, 100);
 
-  lblProgress = ui_label(mainBox, &lv_font_montserrat_20, C_TEXT, 10, 88, 190);
-  lblLayers = ui_label(mainBox, &lv_font_montserrat_14, C_DIM, 200, 93, 110);
+  lblProgress = ui_label(mainBox, ui.medium, C_TEXT, 10, 88, W - 130);
+  lblLayers = ui_label(mainBox, ui.small, C_DIM, W - 120, 93, 110);
   lv_obj_set_style_text_align(lblLayers, LV_TEXT_ALIGN_RIGHT, 0);
-  lblHeadline = ui_label(mainBox, &lv_font_montserrat_28, C_TEXT, 10, 66, 300);
-  lblTemps = ui_label(mainBox, &lv_font_montserrat_14, C_DIM, 10, 116, 300);
-  lblDetail = ui_label(mainBox, &lv_font_montserrat_14, C_TEXT, 10, 138, 300);
-  lv_obj_set_height(lblDetail, 34); // two lines, then "..."
+  lblHeadline = ui_label(mainBox, ui.large, C_TEXT, 10, 66, wide);
+  lblTemps = ui_label(mainBox, ui.small, C_DIM, 10, 116, wide);
+  lblDetail = ui_label(mainBox, ui.small, C_TEXT, 10, 138, wide);
+  lv_obj_set_height(lblDetail, px(34)); // two lines, then "..."
 
-  btnRow = lv_obj_create(mainBox);
-  lv_obj_remove_style_all(btnRow);
-  lv_obj_set_pos(btnRow, 8, 178);
-  lv_obj_set_size(btnRow, 304, 56);
-  lv_obj_set_flex_flow(btnRow, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(btnRow, 8, 0);
-  lv_obj_remove_flag(btnRow, LV_OBJ_FLAG_SCROLLABLE);
-
+  // --- the buttons, along the bottom edge
+  btnRow = button_row(mainBox, 8, H - 62, W - 16, 56);
   for (int i = 0; i < MAX_ACTIONS; i++) {
     btn[i] = lv_button_create(btnRow);
-    lv_obj_set_height(btn[i], 56);
+    lv_obj_set_height(btn[i], px(56));
     lv_obj_set_flex_grow(btn[i], 1);
-    lv_obj_set_style_pad_hor(btn[i], 4, 0);
+    lv_obj_set_style_pad_hor(btn[i], px(4), 0);
     plain_button_style(btn[i]);
     lv_obj_add_event_cb(btn[i], button_cb, LV_EVENT_ALL, (void *)(intptr_t)i);
     btnLabel[i] = lv_label_create(btn[i]);
-    lv_obj_set_style_text_font(btnLabel[i], &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(btnLabel[i], ui.small, 0);
     lv_obj_set_style_text_align(btnLabel[i], LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(btnLabel[i]);
     lv_obj_add_flag(btn[i], LV_OBJ_FLAG_HIDDEN);
   }
 
   // --- outcome question: two big buttons and a small "Later" in place of the lower half
-  verdictRow = lv_obj_create(mainBox);
-  lv_obj_remove_style_all(verdictRow);
-  lv_obj_set_pos(verdictRow, 8, 106);
-  lv_obj_set_size(verdictRow, 304, 128);
-  lv_obj_set_flex_flow(verdictRow, LV_FLEX_FLOW_ROW);
-  lv_obj_set_style_pad_column(verdictRow, 8, 0);
-  lv_obj_remove_flag(verdictRow, LV_OBJ_FLAG_SCROLLABLE);
+  verdictRow = button_row(mainBox, 8, 106, W - 16, H - 112);
   verdict_button(&icon_thumb_up, nullptr, C_GREEN, 5, GOOD);
   verdict_button(&icon_thumb_down, nullptr, C_RED, 5, BAD);
   verdict_button(nullptr, "Later", C_GREY, 3, LATER);
@@ -277,18 +296,18 @@ void ui_begin()
 
   // --- message screen
   msgBox = ui_box(scr);
-  lblMsgTitle = ui_label(msgBox, &lv_font_montserrat_28, C_TEXT, 10, 40, 300);
+  lblMsgTitle = ui_label(msgBox, ui.large, C_TEXT, 10, mid + 40, wide);
   lv_obj_set_style_text_align(lblMsgTitle, LV_TEXT_ALIGN_CENTER, 0);
-  lblMsgBody = ui_label(msgBox, &lv_font_montserrat_14, C_DIM, 10, 90, 300);
+  lblMsgBody = ui_label(msgBox, ui.small, C_DIM, 10, mid + 90, wide);
   lv_label_set_long_mode(lblMsgBody, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(lblMsgBody, LV_TEXT_ALIGN_CENTER, 0);
 
   // --- touch calibration: a cross to tap, text in the middle
   calBox = ui_box(scr);
-  lv_obj_t *calTitle = ui_label(calBox, &lv_font_montserrat_20, C_TEXT, 10, 84, 300);
+  lv_obj_t *calTitle = ui_label(calBox, ui.medium, C_TEXT, 10, mid + 84, wide);
   lv_obj_set_style_text_align(calTitle, LV_TEXT_ALIGN_CENTER, 0);
   lv_label_set_text(calTitle, "Touch calibration");
-  lblCal = ui_label(calBox, &lv_font_montserrat_14, C_DIM, 10, 114, 300);
+  lblCal = ui_label(calBox, ui.small, C_DIM, 10, mid + 114, wide);
   lv_label_set_long_mode(lblCal, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(lblCal, LV_TEXT_ALIGN_CENTER, 0);
   for (lv_obj_t **line : {&crossH, &crossV}) {
@@ -297,21 +316,21 @@ void ui_begin()
     lv_obj_set_style_bg_color(*line, lv_color_hex(C_LIT), 0);
     lv_obj_set_style_bg_opa(*line, LV_OPA_COVER, 0);
   }
-  lv_obj_set_size(crossH, 33, 3);
-  lv_obj_set_size(crossV, 3, 33);
+  lv_obj_set_size(crossH, CROSS_LEN, CROSS_THICK);
+  lv_obj_set_size(crossV, CROSS_THICK, CROSS_LEN);
   lv_obj_add_flag(calBox, LV_OBJ_FLAG_HIDDEN);
 
   // --- toast, above everything, over the header: the least needed part of the screen
   lblToast = lv_label_create(lv_layer_top());
-  lv_obj_set_style_text_font(lblToast, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_font(lblToast, ui.small, 0);
   lv_obj_set_style_text_color(lblToast, lv_color_hex(C_TEXT), 0);
   lv_obj_set_style_bg_color(lblToast, lv_color_hex(C_CHIP), 0);
   lv_obj_set_style_bg_opa(lblToast, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(lblToast, lv_color_hex(C_DIM), 0);
   lv_obj_set_style_border_width(lblToast, 1, 0);
-  lv_obj_set_style_radius(lblToast, 8, 0);
-  lv_obj_set_style_pad_all(lblToast, 8, 0);
-  lv_obj_align(lblToast, LV_ALIGN_TOP_MID, 0, 4);
+  lv_obj_set_style_radius(lblToast, px(8), 0);
+  lv_obj_set_style_pad_all(lblToast, px(8), 0);
+  lv_obj_align(lblToast, LV_ALIGN_TOP_MID, 0, px(4));
   lv_obj_add_flag(lblToast, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_add_flag(mainBox, LV_OBJ_FLAG_HIDDEN);
@@ -330,13 +349,14 @@ void ui_message(const char *title, const char *body)
   lv_refr_now(nullptr);
 }
 
+// x and y are in pixels: the calibration works on the panel's own grid.
 void ui_calibrate(int step, int total, int x, int y)
 {
   char buf[80];
   snprintf(buf, sizeof(buf), "Tap the centre of the cross (%d of %d).\nA fingernail or stylus works best.", step, total);
   lv_label_set_text(lblCal, buf);
-  lv_obj_set_pos(crossH, x - 16, y - 1);
-  lv_obj_set_pos(crossV, x - 1, y - 16);
+  lv_obj_set_pos(crossH, x - CROSS_LEN / 2, y - CROSS_THICK / 2);
+  lv_obj_set_pos(crossV, x - CROSS_THICK / 2, y - CROSS_LEN / 2);
   lv_obj_add_flag(mainBox, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(msgBox, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(tasks_box(), LV_OBJ_FLAG_HIDDEN);

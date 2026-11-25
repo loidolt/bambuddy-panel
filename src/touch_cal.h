@@ -1,4 +1,4 @@
-// Touch calibration maths. No hardware in here, so it runs in the unit tests too.
+// Touch calibration maths. No hardware and no board in here, so it runs in the unit tests too.
 #pragma once
 #include <cstdint>
 
@@ -10,10 +10,11 @@ struct TouchCal {
   bool swap;      // the panel's X and Y are exchanged
 };
 
-// Works the mapping out from four taps on crosses `inset` pixels in from each corner, given in
-// the order top-left, top-right, bottom-right, bottom-left. Changes rx/ry when the axes are
-// swapped. False when the taps can't be right (too close together, or a corner far off).
-bool touch_cal_solve(long rx[4], long ry[4], int inset, TouchCal &cal);
+// Works the mapping out from four taps on crosses `inset` pixels in from each corner of a
+// `w` x `h` screen, given in the order top-left, top-right, bottom-right, bottom-left. Changes
+// rx/ry when the axes are swapped. False when the taps can't be right (too close together, or
+// a corner far off).
+bool touch_cal_solve(long rx[4], long ry[4], int inset, int w, int h, TouchCal &cal);
 
-// Raw reading to screen pixel, clamped to the screen.
-void touch_cal_apply(const TouchCal &cal, int rawX, int rawY, int &x, int &y);
+// Raw reading to a pixel of a `w` x `h` screen, clamped to the screen.
+void touch_cal_apply(const TouchCal &cal, int w, int h, int rawX, int rawY, int &x, int &y);

@@ -10,7 +10,6 @@
 
 #include "bambuddy_api.h"
 #include "bambuddy_parse.h"
-#include "board.h"
 #include "poller.h"
 #include "touch_cal.h"
 #include "ui_logic.h"
@@ -685,12 +684,13 @@ static void test_temperatures()
 // ---------------------------------------------------------------- touch calibration
 
 static const int INSET = 20;
+static int screenW = 320, screenH = 240; // the maths takes the screen's size; the tests try several
 
 // A pretend touch panel: what it reports for a screen point, with optional mirrored or swapped axes.
 static void raw_of(int sx, int sy, bool flipX, bool flipY, bool swap, long &rx, long &ry)
 {
-  long x = (flipX ? 3700 : 200) + (long)sx * (flipX ? -3500 : 3500) / (SCREEN_W - 1);
-  long y = (flipY ? 3800 : 240) + (long)sy * (flipY ? -3560 : 3560) / (SCREEN_H - 1);
+  long x = (flipX ? 3700 : 200) + (long)sx * (flipX ? -3500 : 3500) / (screenW - 1);
+  long y = (flipY ? 3800 : 240) + (long)sy * (flipY ? -3560 : 3560) / (screenH - 1);
   rx = swap ? y : x;
   ry = swap ? x : y;
 }
@@ -698,54 +698,66 @@ static void raw_of(int sx, int sy, bool flipX, bool flipY, bool swap, long &rx, 
 static void four_taps(bool flipX, bool flipY, bool swap, long rx[4], long ry[4])
 {
   const int target[4][2] = {{INSET, INSET},
-                            {SCREEN_W - 1 - INSET, INSET},
-                            {SCREEN_W - 1 - INSET, SCREEN_H - 1 - INSET},
-                            {INSET, SCREEN_H - 1 - INSET}};
+                            {screenW - 1 - INSET, INSET},
+                            {screenW - 1 - INSET, screenH - 1 - INSET},
+                            {INSET, screenH - 1 - INSET}};
   for (int i = 0; i < 4; i++) raw_of(target[i][0], target[i][1], flipX, flipY, swap, rx[i], ry[i]);
 }
 
-static void test_calibration_every_orientation()
+static void every_orientation()
 {
   for (int mode = 0; mode < 8; mode++) {
     bool flipX = mode & 1, flipY = mode & 2, swap = mode & 4;
     long rx[4], ry[4];
     four_taps(flipX, flipY, swap, rx, ry);
     TouchCal cal;
-    TEST_ASSERT_TRUE(touch_cal_solve(rx, ry, INSET, cal));
+    TEST_ASSERT_TRUE(touch_cal_solve(rx, ry, INSET, screenW, screenH, cal));
     TEST_ASSERT_EQUAL(swap, cal.swap);
 
     // Every point on the screen must land within 2 px of where the finger is.
-    for (int sx = 0; sx < SCREEN_W; sx += 29)
-      for (int sy = 0; sy < SCREEN_H; sy += 23) {
+    for (int sx = 0; sx < screenW; sx += 29)
+      for (int sy = 0; sy < screenH; sy += 23) {
         long x, y;
         raw_of(sx, sy, flipX, flipY, swap, x, y);
         int px, py;
-        touch_cal_apply(cal, (int)x, (int)y, px, py);
+        touch_cal_apply(cal, screenW, screenH, (int)x, (int)y, px, py);
         TEST_ASSERT_INT_WITHIN(2, sx, px);
         TEST_ASSERT_INT_WITHIN(2, sy, py);
       }
   }
 }
 
+static void test_calibration_every_orientation()
+{
+  static const int sizes[][2] = {{320, 240}, {480, 320}, {800, 480}, {240, 320}};
+  for (auto &size : sizes) {
+    screenW = size[0];
+    screenH = size[1];
+    every_orientation();
+  }
+  screenW = 320;
+  screenH = 240;
+}
+
 static void test_calibration_refuses_nonsense()
 {
   TouchCal cal;
   long sameX[4] = {2000, 2010, 1990, 2005}, sameY[4] = {2000, 1995, 2005, 2000};
-  TEST_ASSERT_FALSE(touch_cal_solve(sameX, sameY, INSET, cal)); // one spot tapped four times
+  TEST_ASSERT_FALSE(touch_cal_solve(sameX, sameY, INSET, screenW, screenH, cal)); // one spot tapped four times
 
   long rx[4], ry[4];
   four_taps(false, false, false, rx, ry);
   rx[2] -= 1200;
-  TEST_ASSERT_FALSE(touch_cal_solve(rx, ry, INSET, cal)); // one corner far off
+  TEST_ASSERT_FALSE(touch_cal_solve(rx, ry, INSET, screenW, screenH, cal)); // one corner far off
 }
 
 static void test_touch_is_clamped_to_the_screen()
 {
   TouchCal cal = {200, 3700, 240, 3800, false};
   int x, y;
-  touch_cal_apply(cal, 0, 4095, x, y);
+  touch_cal_apply(cal, screenW, screenH, 0, 4095, x, y);
   TEST_ASSERT_EQUAL_INT(0, x);
-  TEST_ASSERT_EQUAL_INT(SCREEN_H - 1, y);
+  TEST_ASSERT_EQUAL_INT(screenH - 1, y);
 }
 
 int main()

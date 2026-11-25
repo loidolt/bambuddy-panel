@@ -1,56 +1,53 @@
+// Ties the board's drivers to LVGL: draw buffer, touch input with calibration, backlight, LED.
+// Nothing in here knows which panel or touch chip the board has; that is in src/drivers/.
 #include "display.h"
 #include "board.h"
+#include "drivers/drivers.h"
 
-#include <SPI.h>
-#include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
 #include <lvgl.h>
 
-static TFT_eSPI tft;
-static SPIClass touchSpi(VSPI);
-static XPT2046_Touchscreen touch(TOUCH_CS, TOUCH_IRQ);
-
-// LVGL renders into this strip (a tenth of the screen) and we push each strip to the panel.
-alignas(4) static uint8_t drawBuf[SCREEN_W * SCREEN_H / 10 * 2];
+// LVGL renders into this strip (a tenth of the screen unless the board says otherwise) and
+// each strip is pushed to the panel.
+alignas(4) static uint8_t drawBuf[SCREEN_W * DRAW_BUF_ROWS * 2];
 
 static uint32_t tick_cb() { return millis(); }
 
 static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)
 {
-  uint32_t w = lv_area_get_width(area);
-  uint32_t h = lv_area_get_height(area);
-  tft.startWrite();
-  tft.setAddrWindow(area->x1, area->y1, w, h);
-  tft.pushColors((uint16_t *)px, w * h, true);
-  tft.endWrite();
+  panel_push(area->x1, area->y1, lv_area_get_width(area), lv_area_get_height(area), (uint16_t *)px);
   lv_display_flush_ready(disp);
 }
 
-// Typical values for this board, used until the panel has been calibrated.
-static TouchCal cal = {TOUCH_X_MIN, TOUCH_X_MAX, TOUCH_Y_MIN, TOUCH_Y_MAX, false};
+bool display_needs_calibration() { return TOUCH_NEEDS_CALIBRATION; }
 
-bool display_raw_touch(int &x, int &y)
-{
-  if (!touch.tirqTouched() || !touch.touched()) return false;
-  TS_Point p = touch.getPoint();
-  x = p.x;
-  y = p.y;
-  return true;
-}
+bool display_raw_touch(int &x, int &y) { return touch_read(x, y); }
+
+#if TOUCH_NEEDS_CALIBRATION
+// Typical values for this board, used until the panel has been calibrated.
+static TouchCal cal = {TOUCH_CAL_X0, TOUCH_CAL_X1, TOUCH_CAL_Y0, TOUCH_CAL_Y1, false};
 
 void display_set_touch_cal(const TouchCal &c)
 {
   if (c.x0 != c.x1 && c.y0 != c.y1) cal = c;
 }
+#else
+void display_set_touch_cal(const TouchCal &) {}
+#endif
 
+// The finger in screen pixels.
 static bool read_touch(int32_t &x, int32_t &y)
 {
-  int rx, ry;
-  if (!display_raw_touch(rx, ry)) return false;
+  int tx, ty;
+  if (!touch_read(tx, ty)) return false;
+#if TOUCH_NEEDS_CALIBRATION
   int sx, sy;
-  touch_cal_apply(cal, rx, ry, sx, sy);
+  touch_cal_apply(cal, SCREEN_W, SCREEN_H, tx, ty, sx, sy);
   x = sx;
   y = sy;
+#else
+  x = constrain(tx, 0, SCREEN_W - 1);
+  y = constrain(ty, 0, SCREEN_H - 1);
+#endif
   return true;
 }
 
@@ -68,22 +65,22 @@ static void touch_cb(lv_indev_t *, lv_indev_data_t *data)
 
 void display_begin()
 {
+#ifdef LED_R
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
+#endif
   display_led(false, false, false);
 
-  tft.init();
-  tft.setRotation(1); // landscape, USB on the right
-  tft.fillScreen(TFT_BLACK);
+  panel_begin();
 
+#ifdef BACKLIGHT_PIN
   ledcSetup(BACKLIGHT_CHANNEL, 5000, 8);
   ledcAttachPin(BACKLIGHT_PIN, BACKLIGHT_CHANNEL);
+#endif
   display_brightness(100);
 
-  touchSpi.begin(TOUCH_CLK, TOUCH_MISO, TOUCH_MOSI, TOUCH_CS);
-  touch.begin(touchSpi);
-  touch.setRotation(1);
+  touch_begin();
 
   lv_init();
   lv_tick_set_cb(tick_cb);
@@ -107,13 +104,23 @@ bool display_touched()
 
 void display_brightness(uint8_t percent)
 {
+#ifdef BACKLIGHT_PIN
   if (percent > 100) percent = 100;
   ledcWrite(BACKLIGHT_CHANNEL, percent * 255 / 100);
+#else
+  (void)percent;
+#endif
 }
 
+// A board without a status LED simply has none; the screen says the same thing.
 void display_led(bool r, bool g, bool b)
 {
-  digitalWrite(LED_R, r ? LOW : HIGH);
-  digitalWrite(LED_G, g ? LOW : HIGH);
-  digitalWrite(LED_B, b ? LOW : HIGH);
+#ifdef LED_R
+  const int on = LED_ACTIVE_LOW ? LOW : HIGH, off = LED_ACTIVE_LOW ? HIGH : LOW;
+  digitalWrite(LED_R, r ? on : off);
+  digitalWrite(LED_G, g ? on : off);
+  digitalWrite(LED_B, b ? on : off);
+#else
+  (void)r, (void)g, (void)b;
+#endif
 }
