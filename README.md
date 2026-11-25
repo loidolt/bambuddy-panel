@@ -55,8 +55,8 @@ the Error and Idle buttons.
 
 ## Hardware
 
-ESP32-2432S028R: ESP32-WROOM, 2.8" 320x240 display, resistive touch, no PSRAM. Sold under many
-names. Two display chips are common and both are supported:
+One board so far, the ESP32-2432S028R: ESP32-WROOM, 2.8" 320x240 display, resistive touch, no
+PSRAM. Sold under many names. Two display chips are common and both are supported:
 
 | Variant | Build |
 |---|---|
@@ -67,6 +67,9 @@ The USB ports are only a hint; sellers mix them. If the picture stays white or g
 other build.
 
 Power it from any 5 V USB supply.
+
+Other boards and screen sizes: each board is one file in `boards/`, and the screens scale
+themselves to the size they find. [boards/README.md](boards/README.md) says how to add one.
 
 ## Build and flash
 
@@ -84,7 +87,8 @@ pio run -e cyd-ili9341 -t upload
 pio device monitor
 ```
 
-If the picture is wrong on first boot, change one flag in `platformio.ini` under your variant:
+If the picture is wrong on first boot, change one flag in `boards/cyd-2432s028r.ini` under your
+variant:
 
 | Symptom | Change |
 |---|---|
@@ -149,7 +153,8 @@ when the panel starts, it says so and keeps trying; it doesn't open the setup ne
 ## Simulator
 
 The panel's screens, its JSON reading, its requests and its polling round run on the desktop in
-a 320x240 window (shown at 2x), so screens can be worked on without flashing a board. Needs SDL2
+a window the size of the panel's screen (320x240, shown at 2x), so screens can be worked on
+without flashing a board. Needs SDL2
 (macOS: `brew install sdl2`; Debian/Ubuntu: `apt install libsdl2-dev`).
 
 ```bash
@@ -164,6 +169,17 @@ A PNG of every state, into `shots/`:
 
 ```bash
 ./tools/shots.sh
+```
+
+Another screen size, for a board that isn't 320x240. `--size` works with the window and with
+`--live` too:
+
+```bash
+./tools/shots.sh 480x320
+```
+
+```bash
+.pio/build/sim/program --size 480x320
 ```
 
 A real printer, read-only (the buttons send nothing):
@@ -189,22 +205,27 @@ Covers the parts with no hardware in them: reading Bambuddy's JSON (status, queu
 question, maintenance, settings), the requests each button sends, the polling round, which
 screen and buttons each printer state gets, the text on screen, and the touch calibration maths.
 
-CI runs the tests, builds both firmware variants (also with updates over WiFi turned on), checks
-that `src/icons.c` and the README's screenshots are up to date, and fails on any warning in the
-panel's own code.
+CI runs the tests, builds the firmware for every board (also with updates over WiFi turned on),
+checks that `src/icons.c` and the README's screenshots are up to date, draws the screens at a
+second size, and fails on any warning in the panel's own code.
 
 ## Updates over WiFi
 
 Off unless built with a password of at least 8 characters (the build fails on a shorter one).
-Put it in `platformio_override.ini` (ignored by git) and add
-`extra_configs = platformio_override.ini` under `[platformio]`:
+Put it in `platformio_override.ini` (ignored by git, read when it is there), as a build of your
+own on top of your board's:
 
 ```ini
-[env:cyd-st7789]
-build_flags = ${esp32.build_flags} -DST7789_DRIVER=1 -DTFT_RGB_ORDER=TFT_BGR -DTFT_INVERSION_OFF=1 -DOTA_PASSWORD=\"change-me-please\"
+[env:my-panel]
+extends = env:cyd-st7789
+build_flags = ${env:cyd-st7789.build_flags} -DOTA_PASSWORD=\"change-me-please\"
 upload_protocol = espota
 upload_port = bambuddy-panel-1.local
 upload_flags = --auth=change-me-please
+```
+
+```bash
+pio run -e my-panel -t upload
 ```
 
 The password is checked with a challenge, so it doesn't cross the network, but the firmware
@@ -245,11 +266,15 @@ and runs between two reads rather than after a whole round.
 | `src/bambuddy_parse.*` | JSON to state |
 | `src/ui_logic.*` | Which screen and buttons each state gets, and the text on it |
 | `src/ui.cpp`, `src/ui_tasks.cpp` | Drawing: the status, message and calibration screens; the maintenance screen |
-| `src/display.*` | Screen, touch, backlight, LED |
+| `src/ui_layout.cpp` | Fits the screens to the panel's size: the unit grid and the text sizes |
+| `src/display.*` | The board's drivers tied to LVGL: drawing, touch, backlight, LED |
+| `src/drivers/` | One file per panel or touch chip; the board picks |
 | `src/calibrate.*`, `src/touch_cal.*` | Touch calibration: the screen flow, and the maths |
 | `src/settings.*` | Settings kept in flash |
 | `src/icons.*` | Icons, made by `tools/make_icons.py` from the SVGs in `tools/icons/` |
-| `src/board.h` | Pins |
+| `src/board.h` | Checks the board's description is complete |
+| `boards/` | One file per board: chip, pins, screen size, drivers. [How to add one](boards/README.md) |
+| `platformio.ini` | What every build shares; the simulator and test builds |
 | `src/sim/` | Desktop simulator and its made-up states |
 | `test/` | Unit tests |
 

@@ -8,7 +8,7 @@
 #include "touch_cal.h"
 #include "ui.h"
 
-static const int INSET = 20;            // crosses sit this far in from each corner
+static const int INSET = SCREEN_H / 12; // crosses sit this far in from each corner
 static const uint32_t GIVE_UP_MS = 60000; // per cross, when nobody touches the screen
 
 static void wait_release()
@@ -83,7 +83,7 @@ bool calibrate_run(bool haveSaved)
     }
 
     TouchCal cal;
-    if (touch_cal_solve(rx, ry, INSET, cal)) {
+    if (touch_cal_solve(rx, ry, INSET, SCREEN_W, SCREEN_H, cal)) {
       display_set_touch_cal(cal);
       settings_save_touch(cal);
       Serial.printf("[calibrate] saved x %d..%d y %d..%d swap %d\n", cal.x0, cal.x1, cal.y0, cal.y1, cal.swap);

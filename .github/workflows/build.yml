@@ -39,7 +39,8 @@ jobs:
           python3 tools/make_icons.py
           git diff --exit-code src/icons.c
 
-      - name: Firmware, both display variants
+      # One -e per build in boards/*.ini.
+      - name: Firmware, every board
         run: pio run -e cyd-st7789 -e cyd-ili9341
 
       - name: Firmware with updates over WiFi turned on
@@ -56,12 +57,16 @@ jobs:
       - name: README screenshots match the simulator
         run: python3 tools/compare_shots.py docs/screenshots shots
 
+      # The same screens on a bigger panel: fails when a button the screenshots press is gone.
+      - name: Simulator screenshots at 480x320
+        run: ./tools/shots.sh 480x320
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: firmware
-          path: .pio/build/cyd-*/firmware.bin
+          path: .pio/build/*/firmware.bin
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: screenshots
-          path: shots/*.png
+          path: shots/**/*.png

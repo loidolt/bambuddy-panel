@@ -1,7 +1,7 @@
 // Per-device settings, kept in flash (NVS) and entered through the setup portal.
 #pragma once
 #include <Arduino.h>
-#include "display.h"
+#include "touch_cal.h"
 
 struct Settings {
   String url;        // Bambuddy base URL, e.g. http://192.168.1.50:3700
