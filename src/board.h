@@ -25,5 +25,3 @@
 #define LED_R 4
 #define LED_G 16
 #define LED_B 17
-
-#define LIGHT_SENSOR_PIN 34

@@ -1,5 +1,5 @@
-// The panel's screens. One status screen whose buttons follow the printer's state,
-// plus a plain message screen for boot and setup.
+// The panel's screens: a status screen whose buttons follow the printer's state, the
+// maintenance screen (ui_tasks.cpp), a message screen for boot and setup, and touch calibration.
 #pragma once
 #include "bambuddy.h"
 
