@@ -48,3 +48,16 @@ void touch_cal_apply(const TouchCal &cal, int w, int h, int rawX, int rawY, int 
   x = scale(rawX, cal.x0, cal.x1, w - 1);
   y = scale(rawY, cal.y0, cal.y1, h - 1);
 }
+
+void touch_orient(int w, int h, bool swap, bool mirrorX, bool mirrorY, int &x, int &y)
+{
+  if (swap) {
+    int t = x;
+    x = y;
+    y = t;
+  }
+  if (mirrorX) x = w - 1 - x;
+  if (mirrorY) y = h - 1 - y;
+  x = x < 0 ? 0 : x > w - 1 ? w - 1 : x;
+  y = y < 0 ? 0 : y > h - 1 ? h - 1 : y;
+}

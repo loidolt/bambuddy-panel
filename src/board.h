@@ -19,13 +19,38 @@
 #ifndef TOUCH_XPT2046
 #define TOUCH_XPT2046 0
 #endif
-#if TOUCH_XPT2046 != 1
+#ifndef TOUCH_GT911
+#define TOUCH_GT911 0
+#endif
+#ifndef TOUCH_CST8XX
+#define TOUCH_CST8XX 0
+#endif
+#ifndef TOUCH_FT6X36
+#define TOUCH_FT6X36 0
+#endif
+#if TOUCH_XPT2046 + TOUCH_GT911 + TOUCH_CST8XX + TOUCH_FT6X36 != 1
 #error "The board's file must pull in one touch driver, e.g. ${touch_xpt2046.build_flags}"
 #endif
 
 // Resistive touch reports raw controller readings, which calibration maps to the screen.
-// A capacitive controller reports screen pixels and needs none.
+// A capacitive controller reports pixels on its own grid and needs none.
 #define TOUCH_NEEDS_CALIBRATION TOUCH_XPT2046
+
+// How a capacitive controller's grid lies on the screen: first X and Y change places, then
+// each can run the other way. For a panel whose touch grid matches its portrait picture:
+// rotation 1 needs swap + mirror Y, rotation 3 swap + mirror X, rotation 2 both mirrors.
+#ifndef TOUCH_SWAP_XY
+#define TOUCH_SWAP_XY 0
+#endif
+#ifndef TOUCH_MIRROR_X
+#define TOUCH_MIRROR_X 0
+#endif
+#ifndef TOUCH_MIRROR_Y
+#define TOUCH_MIRROR_Y 0
+#endif
+#if !TOUCH_NEEDS_CALIBRATION && !(defined(TOUCH_SDA) && defined(TOUCH_SCL))
+#error "I2C touch needs TOUCH_SDA and TOUCH_SCL"
+#endif
 
 #if TOUCH_NEEDS_CALIBRATION && \
     !(defined(TOUCH_CAL_X0) && defined(TOUCH_CAL_X1) && defined(TOUCH_CAL_Y0) && defined(TOUCH_CAL_Y1))

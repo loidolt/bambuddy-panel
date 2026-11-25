@@ -18,3 +18,7 @@ bool touch_cal_solve(long rx[4], long ry[4], int inset, int w, int h, TouchCal &
 
 // Raw reading to a pixel of a `w` x `h` screen, clamped to the screen.
 void touch_cal_apply(const TouchCal &cal, int w, int h, int rawX, int rawY, int &x, int &y);
+
+// For touch that reports pixels on its own grid (capacitive): turns that grid to lie on a
+// `w` x `h` screen. X and Y change places first, then each can run the other way. Clamped.
+void touch_orient(int w, int h, bool swap, bool mirrorX, bool mirrorY, int &x, int &y);
