@@ -14,9 +14,11 @@ void panel_push(int x, int y, int w, int h, uint16_t *pixels);
 
 // ---- touch
 
+// Called after panel_begin(), so a touch chip on the panel's bus finds the bus started.
 void touch_begin();
 
 // Where the finger is; false when nothing touches the screen. A resistive controller gives its
-// raw readings (display.cpp maps them with the calibration); a capacitive one gives screen
-// pixels in the UI's orientation. Which it is: TOUCH_NEEDS_CALIBRATION in board.h.
+// raw readings, which display.cpp maps with the calibration. A capacitive one gives pixels on
+// its own grid, which display.cpp turns to the screen (TOUCH_SWAP_XY and the mirrors).
+// Which it is: TOUCH_NEEDS_CALIBRATION in board.h.
 bool touch_read(int &x, int &y);

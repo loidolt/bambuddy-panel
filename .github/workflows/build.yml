@@ -39,9 +39,9 @@ jobs:
           python3 tools/make_icons.py
           git diff --exit-code src/icons.c
 
-      # One -e per build in boards/*.ini.
+      # Every [env:...] in boards/*.ini.
       - name: Firmware, every board
-        run: pio run -e cyd-st7789 -e cyd-ili9341
+        run: pio run $(grep -ho '^\[env:[^]]*' boards/*.ini | sed 's/^\[env:/-e /')
 
       - name: Firmware with updates over WiFi turned on
         env:

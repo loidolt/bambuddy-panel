@@ -45,8 +45,9 @@ static bool read_touch(int32_t &x, int32_t &y)
   x = sx;
   y = sy;
 #else
-  x = constrain(tx, 0, SCREEN_W - 1);
-  y = constrain(ty, 0, SCREEN_H - 1);
+  touch_orient(SCREEN_W, SCREEN_H, TOUCH_SWAP_XY, TOUCH_MIRROR_X, TOUCH_MIRROR_Y, tx, ty);
+  x = tx;
+  y = ty;
 #endif
   return true;
 }

@@ -55,8 +55,8 @@ the Error and Idle buttons.
 
 ## Hardware
 
-One board so far, the ESP32-2432S028R: ESP32-WROOM, 2.8" 320x240 display, resistive touch, no
-PSRAM. Sold under many names. Two display chips are common and both are supported:
+Written for the ESP32-2432S028R: ESP32-WROOM, 2.8" 320x240 display, resistive touch, no PSRAM.
+Sold under many names. Two display chips are common and both are supported:
 
 | Variant | Build |
 |---|---|
@@ -68,8 +68,28 @@ other build.
 
 Power it from any 5 V USB supply.
 
-Other boards and screen sizes: each board is one file in `boards/`, and the screens scale
-themselves to the size they find. [boards/README.md](boards/README.md) says how to add one.
+### Other boards
+
+Its relatives have profiles too. They build, and their pins come from board definitions other
+projects use, but **none has been flashed yet**; [boards/README.md](boards/README.md) lists
+what to change if the picture or the touch comes out wrong.
+
+| Board | Screen | Touch | Build |
+|---|---|---|---|
+| ESP32-2432S024R | 2.4" 320x240 | resistive | `esp32-2432s024r` |
+| ESP32-2432S024C | 2.4" 320x240 | capacitive | `esp32-2432s024c` |
+| ESP32-2432S032R | 3.2" 320x240 | resistive | `esp32-2432s032r` |
+| ESP32-2432S032C | 3.2" 320x240 | capacitive | `esp32-2432s032c` |
+| ESP32-3248S035R | 3.5" 480x320 | resistive | `esp32-3248s035r` |
+| ESP32-3248S035C | 3.5" 480x320 | capacitive | `esp32-3248s035c` |
+| Guition JC2432W328C | 2.8" 320x240 | capacitive | `jc2432w328c` |
+| WT32-SC01 | 3.5" 480x320 | capacitive | `wt32-sc01` |
+
+A board with capacitive touch has no touch calibration: a touch at start-up goes straight to
+WiFi and Bambuddy setup. A board without a status LED shows the same things on screen only.
+
+Each board is one file in `boards/`, and the screens scale themselves to the size they find.
+[boards/README.md](boards/README.md) says how to add one.
 
 ## Build and flash
 

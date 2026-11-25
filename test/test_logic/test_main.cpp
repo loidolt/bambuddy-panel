@@ -760,6 +760,36 @@ static void test_touch_is_clamped_to_the_screen()
   TEST_ASSERT_EQUAL_INT(screenH - 1, y);
 }
 
+// Capacitive touch: a controller that reports the panel's own portrait grid (240 wide, 320
+// tall), on a screen shown in landscape.
+static void test_touch_grid_is_turned_to_the_screen()
+{
+  int x, y;
+  // Turned a quarter one way: the portrait grid's top-right corner is the screen's top-left.
+  x = 239, y = 0;
+  touch_orient(320, 240, true, false, true, x, y);
+  TEST_ASSERT_EQUAL_INT(0, x);
+  TEST_ASSERT_EQUAL_INT(0, y);
+  x = 0, y = 319; // portrait bottom-left = screen bottom-right
+  touch_orient(320, 240, true, false, true, x, y);
+  TEST_ASSERT_EQUAL_INT(319, x);
+  TEST_ASSERT_EQUAL_INT(239, y);
+  // Turned the other way: the portrait grid's bottom-left corner is the screen's top-left.
+  x = 0, y = 319;
+  touch_orient(320, 240, true, true, false, x, y);
+  TEST_ASSERT_EQUAL_INT(0, x);
+  TEST_ASSERT_EQUAL_INT(0, y);
+  // Not turned at all: untouched, but never off the screen.
+  x = 100, y = 50;
+  touch_orient(320, 240, false, false, false, x, y);
+  TEST_ASSERT_EQUAL_INT(100, x);
+  TEST_ASSERT_EQUAL_INT(50, y);
+  x = 400, y = -3;
+  touch_orient(320, 240, false, false, false, x, y);
+  TEST_ASSERT_EQUAL_INT(319, x);
+  TEST_ASSERT_EQUAL_INT(0, y);
+}
+
 int main()
 {
   UNITY_BEGIN();
@@ -803,5 +833,6 @@ int main()
   RUN_TEST(test_calibration_every_orientation);
   RUN_TEST(test_calibration_refuses_nonsense);
   RUN_TEST(test_touch_is_clamped_to_the_screen);
+  RUN_TEST(test_touch_grid_is_turned_to_the_screen);
   return UNITY_END();
 }
