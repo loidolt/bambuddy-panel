@@ -2,15 +2,20 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
 
 #include "bambuddy_api.h"
+#include "board.h"
 #include "display.h"
+#include "fw_check.h"
 #include "messages.h"
 #include "settings.h"
 #include "setup_page.h"
 #include "ui.h"
+#include "version.h"
 
 static const uint32_t IDLE_MS = 10 * 60 * 1000; // a panel that was set up already goes back to work
 static const int MAX_WRONG = 10;                // wrong codes before the panel shows a new one
@@ -21,7 +26,25 @@ static int wrong = 0;
 static WebSetup result;
 static bool finished = false;
 static bool first = false;
-static uint32_t lastSave = 0;
+static uint32_t lastSave = 0; // or the last piece of a firmware upload
+
+// This build's name, as an uploaded firmware file is searched for it (fw_check.h). The name is
+// read out of this text when the page starts, which is also what keeps the text in the firmware.
+static const char BOARD_STAMP[] = FW_BOARD_MARKER BOARD_ENV ";";
+static char thisBoard[sizeof(((FwCheck *)nullptr)->board)];
+static_assert(sizeof(BOARD_ENV) <= sizeof(thisBoard), "the build's name is too long for the board check");
+
+// A firmware upload, from its first piece to the answer.
+static struct {
+  bool seen;     // a file came with this request
+  bool codeOk;   // checked once, before anything is written
+  bool writing;  // the spare slot is being written
+  bool done;     // written, checked and made the one to start from
+  FwVerdict verdict;
+  FwCheck check;
+  size_t room;   // what the spare slot holds
+  String error;  // from the flash writer
+} up;
 
 // The printers the saved key may see, read from Bambuddy after a Save, so the page can offer
 // them by name instead of asking for an id. Empty until then, or when Bambuddy didn't list any.
@@ -112,7 +135,7 @@ struct StringPage : PageText {
 static void send_page(const String &msg, const char *kind, const String &typedCode, bool finishAnyway, bool done = false)
 {
   String p;
-  p.reserve(7000);
+  p.reserve(8200);
   StringPage out(p);
   PageData d;
   d.msg = msg.c_str();
@@ -125,6 +148,8 @@ static void send_page(const String &msg, const char *kind, const String &typedCo
   d.choiceCount = choiceCount;
   d.finishAnyway = finishAnyway;
   d.done = done;
+  d.version = FW_VERSION;
+  d.board = thisBoard;
   for (int i = 0; i < choiceCount; i++)
     if (choices[i].id == settings.printerId) d.printerName = choices[i].name;
   setup_page(out, d);
@@ -143,6 +168,7 @@ static int check_bambuddy()
   if (!http.begin(client, settings.url + path)) return ERR_BAD_URL;
   http.setConnectTimeout(3000);
   http.setTimeout(5000);
+  http.setUserAgent(FW_USER_AGENT);
   http.addHeader("X-API-Key", settings.key);
   http.addHeader("Accept", "application/json");
   int c = http.GET();
@@ -162,6 +188,7 @@ static int fetch_printers(const String &url, const String &key)
   http.useHTTP10(true);
   http.setConnectTimeout(3000);
   http.setTimeout(5000);
+  http.setUserAgent(FW_USER_AGENT);
   http.addHeader("X-API-Key", key);
   http.addHeader("Accept", "application/json");
   int c = http.GET();
@@ -360,6 +387,116 @@ static void handle_wifi()
   finished = true;
 }
 
+// ---- firmware update: a file uploaded from the page into the spare application slot
+
+static void update_stop()
+{
+  if (!up.writing) return;
+  Update.abort(); // the slot the panel runs from was never touched
+  up.writing = false;
+  show_screen();
+}
+
+// Called with each piece of the file while the request is still arriving. The form's own fields
+// aren't readable yet at that point, so the code comes in the address (/update?code=...).
+static void handle_update_file()
+{
+  // The web server also calls this for a body that isn't a form, and has no upload to give then.
+  if (!server->header("Content-Type").startsWith("multipart/")) return;
+  HTTPUpload &u = server->upload();
+  if (u.name != "fw" || up.done) return;
+  lastSave = millis(); // a slow upload isn't an idle page
+  switch (u.status) {
+  case UPLOAD_FILE_START:
+    update_stop();
+    up.seen = true;
+    up.writing = false;
+    up.verdict = FwVerdict::Ok;
+    up.check = FwCheck();
+    up.error = "";
+    up.codeOk = code_ok(); // before a single byte is written
+    break;
+  case UPLOAD_FILE_WRITE: {
+    if (!up.seen || !up.codeOk || up.verdict != FwVerdict::Ok || up.error.length() || !u.currentSize) return;
+    bool firstPiece = up.check.size == 0;
+    fw_check_feed(up.check, u.buf, u.currentSize);
+    if (firstPiece) {
+      up.verdict = fw_check_start(up.check);
+      if (up.verdict != FwVerdict::Ok) return; // not an application: nothing is written at all
+      const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
+      up.room = slot ? slot->size : 0;
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        up.error = Update.errorString();
+        return;
+      }
+      up.writing = true;
+      Serial.println("[setup] firmware upload started");
+      ui_message(MSG_UPDATING_TITLE, MSG_UPDATING_BODY);
+    }
+    if (up.check.size > up.room) {
+      up.verdict = FwVerdict::TooBig;
+      update_stop();
+    } else if (Update.write(u.buf, u.currentSize) != u.currentSize) {
+      up.error = Update.errorString();
+      update_stop();
+    }
+    break;
+  }
+  case UPLOAD_FILE_END:
+    if (!up.writing) return;
+    up.verdict = fw_check_end(up.check, thisBoard, up.room);
+    if (up.verdict != FwVerdict::Ok) {
+      update_stop(); // for another board, or no board named: the panel keeps what it runs
+    } else if (!Update.end(true)) {
+      up.error = Update.errorString();
+      update_stop();
+    } else {
+      up.writing = false;
+      up.done = true;
+      // From here the panel starts from the new firmware, whether or not the answer gets out.
+      result = WebSetup::Updated;
+      finished = true;
+    }
+    break;
+  case UPLOAD_FILE_ABORTED:
+    update_stop();
+    up.seen = false;
+    break;
+  }
+}
+
+// Called when the whole request has arrived: says what became of the file.
+static void handle_update()
+{
+  lastSave = millis();
+  String typed = server->arg("code");
+  if (up.done) {
+    Serial.printf("[setup] firmware updated (%u bytes), restarting\n", (unsigned)up.check.size);
+    send_page("Updated. The panel restarts with the new firmware and keeps its settings; you can close this page.",
+              "ok", "", false, true);
+    return;
+  }
+  bool seen = up.seen;
+  up.seen = false;
+  if (seen ? !up.codeOk : !code_ok()) {
+    send_page("That code doesn't match the one on the panel's screen. Nothing was changed.", "e", "", false);
+    return;
+  }
+  String msg;
+  if (seen && up.error.length()) {
+    msg = "The update failed: " + esc(up.error) + ".";
+  } else {
+    FwVerdict v = !seen ? FwVerdict::Empty
+                  : up.verdict != FwVerdict::Ok ? up.verdict
+                                                : fw_check_end(up.check, thisBoard, up.room);
+    char why[240];
+    fw_refusal(why, sizeof(why), v, up.check, thisBoard);
+    msg = why[0] ? why : "The update didn't go through.";
+  }
+  Serial.printf("[setup] firmware upload refused: %s\n", msg.c_str());
+  send_page(msg + " The panel keeps running the firmware it had.", "e", typed, false);
+}
+
 WebSetup setup_web_run(bool firstTime)
 {
   first = firstTime;
@@ -368,6 +505,9 @@ WebSetup setup_web_run(bool firstTime)
   lastSave = millis();
   new_code();
   choiceCount = 0;
+  snprintf(thisBoard, sizeof(thisBoard), "%.*s", (int)(sizeof(BOARD_STAMP) - sizeof(FW_BOARD_MARKER) - 1),
+           BOARD_STAMP + sizeof(FW_BOARD_MARKER) - 1);
+  up.seen = up.writing = up.done = false;
 
   WebServer web(80);
   server = &web;
@@ -376,6 +516,9 @@ WebSetup setup_web_run(bool firstTime)
   web.on("/finish", HTTP_POST, handle_finish);
   web.on("/check", HTTP_POST, handle_check);
   web.on("/wifi", HTTP_POST, handle_wifi);
+  static const char *wanted[] = {"Content-Type"};
+  web.collectHeaders(wanted, 1);
+  web.on("/update", HTTP_POST, handle_update, handle_update_file);
   web.onNotFound([]() {
     server->sendHeader("Location", "/");
     server->send(303);

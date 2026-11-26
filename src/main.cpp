@@ -12,6 +12,7 @@
 #include "settings.h"
 #include "setup_web.h"
 #include "ui.h"
+#include "version.h"
 
 static const char *SETUP_AP = "BambuddyPanel-Setup";
 static const uint32_t PORTAL_TIMEOUT_S = 600;
@@ -116,6 +117,10 @@ static void connect(bool force)
     case WebSetup::Calibrate:
       calibrate_run(true);
       continue; // and back to the settings screen it was asked from
+    case WebSetup::Updated: // the screen still says "Updating"
+      delay(300);
+      ESP.restart();
+      return;
     case WebSetup::Idle:
     case WebSetup::Done:
       return;
@@ -148,6 +153,7 @@ static void start_ota()
 void setup()
 {
   Serial.begin(115200);
+  Serial.printf("\n[boot] Bambuddy Panel %s\n", FW_VERSION);
   display_begin();
   ui_begin();
   settings_load();

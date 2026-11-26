@@ -29,8 +29,9 @@ file, the panel's own license, the icons' license and the license file of every 
 PlatformIO fetched. CI does this and puts the folder into the firmware download. Three texts
 are **not** in that folder, because nothing a build fetches contains them: Montserrat's and
 Font Awesome's (LVGL ships the fonts without them) and ESP-IDF's (the Arduino core ships it
-prebuilt). The table links to them; add them by hand before publishing firmware files anywhere
-but in CI. XPT2046_Touchscreen has no license file; its notice is at the top of its source
+prebuilt). The table links to them. A release adds them itself, from those projects at fixed
+commits (`.github/workflows/release.yml`), and attaches the whole folder as `notices.zip`; add
+them by hand before publishing firmware files any other way. XPT2046_Touchscreen has no license file; its notice is at the top of its source
 files, which the folder gets instead.
 
 Bambuddy Panel is an independent project. It is not part of, or endorsed by, Bambuddy or Bambu Lab.

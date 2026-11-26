@@ -2,6 +2,7 @@
 #include "bambuddy_api.h"
 #include "poller.h"
 #include "settings.h"
+#include "version.h"
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -34,6 +35,7 @@ static bool begin_request(HTTPClient &http, WiFiClient &client, const char *path
   http.useHTTP10(true); // no chunked encoding, so the body can be parsed straight off the socket
   http.setConnectTimeout(3000);
   http.setTimeout(5000);
+  http.setUserAgent(FW_USER_AGENT); // so Bambuddy's log says which firmware asked
   http.addHeader("X-API-Key", settings.key);
   http.addHeader("Accept", "application/json");
   return true;
@@ -139,8 +141,8 @@ static void task(void *)
 
     if (millis() - healthAt >= HEALTH_LOG_MS) {
       healthAt = millis();
-      Serial.printf("[health] stack left %u B, heap free %u B, lowest %u B, biggest block %u B\n",
-                    (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned)ESP.getFreeHeap(),
+      Serial.printf("[health] fw %s, stack left %u B, heap free %u B, lowest %u B, biggest block %u B\n",
+                    FW_VERSION, (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned)ESP.getFreeHeap(),
                     (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     }
   }

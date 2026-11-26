@@ -27,6 +27,8 @@ struct PageData {
   bool finishAnyway = false;  // offers to keep settings Bambuddy didn't accept (it may just be down)
   const char *printerName = ""; // the printer this panel shows, when known: several panels look alike
   bool done = false;          // nothing more to fill in: the message alone
+  const char *version = "";   // the firmware's version, at the foot of the page; "" leaves it out
+  const char *board = "";     // this panel's build, e.g. "cyd-st7789": offers the firmware update; "" doesn't
 };
 
 void setup_page(PageText &p, const PageData &d);

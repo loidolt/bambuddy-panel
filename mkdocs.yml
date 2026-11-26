@@ -1,0 +1,98 @@
+# The documentation site: https://loidolt.github.io/bambuddy-panel/
+# Pages are the Markdown files in docs/. To look at it locally:
+#   pip install -r requirements-docs.txt && mkdocs serve
+site_name: Bambuddy Panel
+site_description: A per-printer touch panel for Bambuddy on inexpensive ESP32 touch displays
+site_url: https://loidolt.github.io/bambuddy-panel/
+repo_url: https://github.com/loidolt/bambuddy-panel
+repo_name: loidolt/bambuddy-panel
+edit_uri: edit/main/docs/
+copyright: >-
+  MIT licensed. An independent community project, not part of, or endorsed by, Bambuddy or Bambu Lab.
+
+# What is in docs/ but not part of the site: working notes, and the page written for
+# Bambuddy's own wiki (its links only work there).
+exclude_docs: |
+  ux-*.md
+  ux-mockups.html
+  community-entry.md
+  wiki/
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Get started: get-started.md
+      - Using the panel: using.md
+      - Updating: updating.md
+      - Troubleshooting: troubleshooting.md
+  - Boards: boards.md
+  - Reference:
+      - Security: security.md
+      - How it talks to Bambuddy: api.md
+  - Development: development.md
+
+# Colours, layout and features follow Bambuddy's own documentation (wiki.bambuddy.cool); the
+# colours themselves are in docs/stylesheets/extra.css.
+theme:
+  name: material
+  font: false # system fonts: nothing is fetched from a font service
+  icon:
+    logo: material/tablet
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: green
+      accent: light green
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.action.edit
+    - content.code.copy
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/loidolt/bambuddy-panel
+      name: Bambuddy Panel on GitHub
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# A link to a page or a heading that isn't there fails the build (mkdocs build --strict).
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn

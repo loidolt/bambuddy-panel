@@ -154,5 +154,34 @@ void setup_page(PageText &p, const PageData &d)
          "o.replaceWith(n);document.getElementById('plabel').textContent='Printer';"
          "var h=document.getElementById('phint');if(h)h.remove()})"
          ".catch(function(){s.textContent='The panel didn\\'t answer.';s.style.color='#b42318'})}chk()</script>");
+  // The file goes to /update with the code in the address: the panel checks the code before it
+  // takes the file, and can't read the form's other fields until the file is through.
+  if (d.board[0]) {
+    p += "<hr style='margin-top:2em'><h2 id='update'>Update firmware</h2><p>This panel runs ";
+    if (d.version[0]) {
+      p += "version <b>";
+      page_escape(p, d.version);
+      p += "</b>, ";
+    }
+    p += "build <b>";
+    page_escape(p, d.board);
+    p += ("</b>.</p><p>Download <code>bambuddy-panel-&lt;version&gt;-");
+    page_escape(p, d.board);
+    p += ("-app.bin</code> from the <a href='https://github.com/loidolt/bambuddy-panel/releases' target='_blank' "
+           "rel='noopener'>releases</a> and choose it here. Not the <code>-full.bin</code>: that one is for "
+           "flashing over USB. Settings and touch calibration are kept.</p>"
+           "<form method='post' action='/update' enctype='multipart/form-data' "
+           "onsubmit=\"this.action='/update?code='+encodeURIComponent(document.getElementById('code').value);"
+           "var b=this.querySelector('button');b.disabled=true;b.textContent='Updating, about a minute...'\">"
+           "<label for='fw'>Firmware file</label><input id='fw' name='fw' type='file' accept='.bin' required>"
+           "<small>Needs the code at the top of this page. Don't unplug the panel while it updates; "
+           "it restarts when it is done.</small>"
+           "<button class='s'>Update firmware</button></form>");
+  }
+  if (d.version[0]) {
+    p += "<small>Firmware ";
+    page_escape(p, d.version);
+    p += "</small>";
+  }
   p += ("</body></html>");
 }

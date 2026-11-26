@@ -1,0 +1,43 @@
+name: Something doesn't work
+description: The panel shows or does something wrong
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Don't paste your API key, and blank out anything in a log you'd rather not share.
+  - type: input
+    id: board
+    attributes:
+      label: Board and build
+      description: The board, and the build you flashed (the name after `-e`, or in the firmware file's name).
+      placeholder: ESP32-2432S028R with two USB ports, cyd-st7789
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: At the foot of the panel's settings page, or in the serial log's `[boot]` line. `dev` for a build of your own; then the commit helps.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: bambuddy
+    attributes:
+      label: Bambuddy version
+      placeholder: 1.3.2
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: What was on the screen, what you pressed, what the printer was doing. A photo of the screen helps.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Serial log
+      description: If you can, the output of `pio device monitor` around the problem, with a `[health]` line.
+      render: text

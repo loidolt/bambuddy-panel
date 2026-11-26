@@ -7,6 +7,8 @@
 //                           same with the touch targets framed (targets/), and checks.txt
 //   program --web <dir>     writes the settings web page as the panel would serve it, in each
 //                           of its states, as .html files
+//   program --demo <dir>    no window; plays a scripted tour of the panel and writes it as raw
+//                           video frames (tools/demo.sh makes a GIF and a video of them)
 //   --size <W>x<H>          with any of the above: another screen than 320x240, e.g. 480x320
 //
 // Buttons work with the mouse. Commands change the made-up state and print the request the
@@ -30,6 +32,7 @@
 #include "bambuddy_parse.h"
 #include "checks.h"
 #include "display.h"
+#include "fw_check.h"
 #include "messages.h"
 #include "poller.h"
 #include "scenarios.h"
@@ -50,8 +53,15 @@ static int restAfterMs = 0;
 static uint32_t skipped = 0, quietSince = 0;
 static bool fingerDown = false; // a pretend finger, for screenshots of pressed buttons
 
+// The demo runs on a clock of its own, so it takes the same frames every time and needn't
+// wait for its minute to pass.
+static bool virtualClock = false;
+static uint32_t virtualMs = 0;
+static void demo_frames_until_now();
+
 uint32_t millis()
 {
+  if (virtualClock) return virtualMs;
   using namespace std::chrono;
   static const auto start = steady_clock::now();
   uint32_t real = (uint32_t)duration_cast<milliseconds>(steady_clock::now() - start).count();
@@ -410,7 +420,10 @@ static void spin(int ms)
     bambuddy_tick();
     ui_update(cur);
     lv_timer_handler();
-    SDL_Delay(5);
+    if (virtualClock) {
+      virtualMs += 5;
+      demo_frames_until_now();
+    } else SDL_Delay(5);
   }
 }
 
@@ -827,6 +840,348 @@ static int run_shots(const std::string &dir)
   return 0;
 }
 
+// ---------------------------------------------------------------- the demo
+
+// A tour of the panel, as a film: the screen, a finger where it touches, the LED on the back
+// and a line saying what is going on. Written as raw RGB frames; tools/demo.sh has the rest.
+static const int DEMO_FPS = 20;
+static const int DEMO_MARGIN = 12; // around the screen, so its edge shows
+static const int DEMO_CAPTION_H = 52; // three lines of the caption
+
+static lv_display_t *captionDisplay;
+static std::vector<uint16_t> captionFrame;
+static lv_obj_t *captionLabel, *ledDot;
+static FILE *demoOut;
+static int demoFrames = 0;
+static uint32_t demoNextFrame = 0, fingerUpAt = 0;
+static bool fingerWasDown = false;
+static std::vector<uint8_t> canvas;
+static int canvasW, canvasH;
+
+static void put(int x, int y, uint16_t p)
+{
+  uint8_t r = (p >> 11) & 31, g = (p >> 5) & 63, b = p & 31;
+  uint8_t *o = &canvas[(y * canvasW + x) * 3];
+  o[0] = (uint8_t)(r << 3 | r >> 2);
+  o[1] = (uint8_t)(g << 2 | g >> 4);
+  o[2] = (uint8_t)(b << 3 | b >> 2);
+}
+
+// The finger: a light disc with a ring, for as long as it is down and a moment after, so a
+// tap shows in more than two frames.
+static void draw_finger(int alpha)
+{
+  const int cx = DEMO_MARGIN + fingerX, cy = DEMO_MARGIN + fingerY, R = 11;
+  for (int y = cy - R; y <= cy + R; y++)
+    for (int x = cx - R; x <= cx + R; x++) {
+      if (x < 0 || y < 0 || x >= canvasW || y >= canvasH) continue;
+      int d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+      if (d2 > R * R) continue;
+      int a = d2 >= (R - 2) * (R - 2) ? alpha : alpha * 2 / 5; // the ring, then the disc
+      uint8_t *o = &canvas[(y * canvasW + x) * 3];
+      for (int c = 0; c < 3; c++) o[c] = (uint8_t)(o[c] + (255 - o[c]) * a / 255);
+    }
+}
+
+static void demo_write_frame()
+{
+  lv_obj_set_style_bg_color(ledDot, lv_color_make(ledR ? 255 : 40, ledG ? 220 : 44, ledB ? 255 : 50), 0);
+  lv_refr_now(shotDisplay);
+  lv_refr_now(captionDisplay);
+  for (int y = 0; y < screenH; y++)
+    for (int x = 0; x < screenW; x++) put(DEMO_MARGIN + x, DEMO_MARGIN + y, frame[y * screenW + x]);
+  for (int y = 0; y < DEMO_CAPTION_H; y++)
+    for (int x = 0; x < canvasW; x++) put(x, DEMO_MARGIN + screenH + y, captionFrame[y * canvasW + x]);
+  if (fingerDown) draw_finger(210);
+  else if (virtualMs - fingerUpAt < 250 && demoFrames > 0) draw_finger(210 - (int)(virtualMs - fingerUpAt) * 210 / 250);
+  fwrite(canvas.data(), 1, canvas.size(), demoOut);
+  demoFrames++;
+}
+
+static void demo_frames_until_now()
+{
+  if (!demoOut) return;
+  if (fingerWasDown && !fingerDown) fingerUpAt = virtualMs;
+  fingerWasDown = fingerDown;
+  while (virtualMs >= demoNextFrame) {
+    demo_write_frame();
+    demoNextFrame += 1000 / DEMO_FPS;
+  }
+}
+
+// The middle of the `nth` button on show that says `text`, counting from 0 in the order they
+// were made: the rows of a list from the top.
+static void collect_buttons(lv_obj_t *o, const char *text, std::vector<lv_obj_t *> &out)
+{
+  if (lv_obj_check_type(o, &lv_button_class) && lv_obj_is_visible(o))
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+      lv_obj_t *c = lv_obj_get_child(o, i);
+      if (lv_obj_check_type(c, &lv_label_class) && strstr(lv_label_get_text(c), text)) out.push_back(o);
+    }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) collect_buttons(lv_obj_get_child(o, i), text, out);
+}
+
+static lv_point_t button_nth(const char *text, size_t nth)
+{
+  lv_obj_update_layout(lv_screen_active());
+  std::vector<lv_obj_t *> found;
+  collect_buttons(lv_screen_active(), text, found);
+  if (nth >= found.size()) {
+    fprintf(stderr, "no button \"%s\" number %d on the screen\n", text, (int)nth + 1);
+    exit(1);
+  }
+  lv_area_t a;
+  lv_obj_get_coords(found[nth], &a);
+  return {(a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2};
+}
+
+static void caption(const char *text) { lv_label_set_text(captionLabel, text); }
+
+// Another made-up state, keeping what counts on from one state to the next.
+static void become(Snapshot s)
+{
+  s.seq = cur.seq + 1;
+  s.toastSeq = cur.toastSeq;
+  snprintf(s.toast, sizeof(s.toast), "%s", cur.toast);
+  s.toastBad = cur.toastBad;
+  cur = s;
+}
+
+static void demo_tap(lv_point_t at)
+{
+  press(shotDisplay, at.x, at.y, 250);
+  fingerDown = false;
+  spin(500);
+}
+
+static void demo_hold(lv_point_t at)
+{
+  press(shotDisplay, at.x, at.y, 1750);
+  fingerDown = false;
+  spin(500);
+}
+
+// The print moving on: progress, layer and time left, read again twice a second.
+static void demo_print(int ms, float from, float to, int totalMin)
+{
+  for (int t = 0; t <= ms; t += 500) {
+    cur.progress = from + (to - from) * t / ms;
+    cur.layer = (int)(cur.totalLayers * cur.progress / 100);
+    cur.remainingMin = (int)(totalMin * (100 - cur.progress) / 100);
+    cur.seq++;
+    spin(500);
+  }
+}
+
+static int run_demo(const std::string &dir)
+{
+  virtualClock = true;
+  virtualMs = 1000; // not 0: a time of 0 means "never" in places
+  canvasW = screenW + 2 * DEMO_MARGIN;
+  canvasH = DEMO_MARGIN + screenH + DEMO_CAPTION_H;
+  canvas.assign(canvasW * canvasH * 3, 0);
+  const lv_color_t surround = lv_color_hex(0x23272e);
+  for (int y = 0; y < canvasH; y++)
+    for (int x = 0; x < canvasW; x++) put(x, y, lv_color_to_u16(surround));
+
+  frame.resize(screenW * screenH);
+  strip.resize(screenW * (screenH / 10));
+  lv_display_t *disp = shotDisplay = lv_display_create(screenW, screenH);
+  lv_display_set_flush_cb(disp, flush_strip);
+  lv_display_set_buffers(disp, strip.data(), nullptr, strip.size() * 2, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_indev_t *indev = lv_indev_create();
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, [](lv_indev_t *, lv_indev_data_t *d) {
+    d->point.x = fingerX;
+    d->point.y = fingerY;
+    d->state = fingerDown ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+  });
+
+  // The line under the screen is a display of its own, so the panel's code never sees it.
+  static std::vector<uint16_t> captionBuf;
+  captionFrame.resize(canvasW * DEMO_CAPTION_H);
+  captionBuf.resize(canvasW * DEMO_CAPTION_H);
+  captionDisplay = lv_display_create(canvasW, DEMO_CAPTION_H);
+  lv_display_set_flush_cb(captionDisplay, [](lv_display_t *d, const lv_area_t *a, uint8_t *px) {
+    int w = lv_area_get_width(a);
+    for (int y = a->y1; y <= a->y2; y++)
+      memcpy(&captionFrame[y * canvasW + a->x1], px + (y - a->y1) * w * 2, w * 2);
+    lv_display_flush_ready(d);
+  });
+  lv_display_set_buffers(captionDisplay, captionBuf.data(), nullptr, captionBuf.size() * 2,
+                         LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_default(disp);
+  lv_obj_t *strip2 = lv_display_get_screen_active(captionDisplay);
+  lv_obj_set_style_bg_color(strip2, surround, 0);
+  lv_obj_set_style_bg_opa(strip2, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(strip2, LV_OBJ_FLAG_SCROLLABLE);
+  captionLabel = lv_label_create(strip2);
+  lv_obj_set_style_text_font(captionLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(captionLabel, lv_color_hex(0xe8eaed), 0);
+  lv_obj_set_style_text_line_space(captionLabel, 2, 0);
+  lv_label_set_long_mode(captionLabel, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(captionLabel, canvasW - 2 * DEMO_MARGIN - 50);
+  lv_obj_align(captionLabel, LV_ALIGN_LEFT_MID, DEMO_MARGIN, 0);
+  lv_label_set_text(captionLabel, "");
+  ledDot = lv_obj_create(strip2);
+  lv_obj_remove_style_all(ledDot);
+  lv_obj_set_size(ledDot, 12, 12);
+  lv_obj_set_style_radius(ledDot, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(ledDot, LV_OPA_COVER, 0);
+  lv_obj_align(ledDot, LV_ALIGN_RIGHT_MID, -DEMO_MARGIN, 7);
+  lv_obj_t *ledLabel = lv_label_create(strip2);
+  lv_obj_set_style_text_font(ledLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(ledLabel, lv_color_hex(0x8b929c), 0);
+  lv_label_set_text(ledLabel, "LED");
+  lv_obj_align(ledLabel, LV_ALIGN_RIGHT_MID, -DEMO_MARGIN + 6, -9);
+
+  std::string path = dir + "/frames.rgb";
+  demoOut = fopen(path.c_str(), "wb");
+  if (!demoOut) {
+    fprintf(stderr, "can't write %s\n", path.c_str());
+    return 1;
+  }
+  demoNextFrame = virtualMs;
+  answerAfterMs = 700;
+  const char *first = "Articulated_dragon_plate_1", *second = "Fidget_gears_plate_2";
+
+  ui_begin();
+
+  // A job waits for its start.
+  cur = scenario_named("ready");
+  cur.seq = 1;
+  cur.queued = 2;
+  cur.moreCount = 1;
+  snprintf(cur.more[0].name, sizeof(cur.more[0].name), "%s", second);
+  cur.more[0].seconds = 2 * 3600 + 5 * 60;
+  caption("One panel per printer. A job waits in Bambuddy's queue.");
+  spin(2400);
+  caption("Hold to start it. A stray touch can't start or stop a print.");
+  spin(900);
+  demo_hold(button("Hold to start"));
+  spin(1200);
+
+  // The printer takes it up; then the print, in fast motion.
+  Snapshot s = scenario_named("preparing");
+  snprintf(s.job, sizeof(s.job), "%s", first);
+  s.remainingMin = 192;
+  s.queued = 1;
+  s.nextId = 43;
+  s.nextAssigned = true;
+  snprintf(s.nextName, sizeof(s.nextName), "%s", second);
+  s.nextSeconds = 2 * 3600 + 5 * 60;
+  become(s);
+  caption("The screen follows the printer: what it is doing...");
+  spin(2200);
+  s = scenario_named("printing");
+  snprintf(s.job, sizeof(s.job), "%s", first);
+  s.queued = 1;
+  s.moreCount = 0;
+  s.nextId = 43;
+  snprintf(s.nextName, sizeof(s.nextName), "%s", second);
+  s.nextSeconds = 2 * 3600 + 5 * 60;
+  s.progress = 1;
+  become(s);
+  caption("...progress, time left, layer, temperatures, what is next.");
+  demo_print(3500, 1, 38, 192);
+
+  caption("Pause and resume are one tap.");
+  spin(800);
+  demo_tap(button("Pause"));
+  spin(1800);
+  demo_tap(button("Resume"));
+  spin(1200);
+  caption("(some hours later)");
+  demo_print(2500, 38, 100, 192);
+
+  // Finished: the outcome question, then the plate.
+  s = scenario_named("verdict");
+  snprintf(s.job, sizeof(s.job), "%s", first);
+  s.queued = 1;
+  s.moreCount = 0;
+  s.nextId = 43;
+  snprintf(s.nextName, sizeof(s.nextName), "%s", second);
+  s.nextSeconds = 2 * 3600 + 5 * 60;
+  become(s);
+  caption("Done. Bambuddy's \"Ask for outcome\", answered at the printer.");
+  spin(2500);
+  demo_tap(icon_button(2, "thumbs up"));
+  spin(1200);
+  caption("Plate is clear: hold, and Bambuddy starts the next job.");
+  spin(1800);
+  demo_hold(button("plate is clear"));
+  spin(1000);
+  cur.totalLayers = 203;
+  cur.nozzle = 220;
+  cur.bed = 60;
+  cur.chamber = 36;
+  demo_print(1500, 1, 6, 125);
+
+  // Filament. (The made-up spools already in slots get numbers the made-up inventory doesn't
+  // use, or assigning its spool 3 would count as moving it out of the slot it was "in".)
+  for (int i = 0; i < cur.assignedCount; i++) cur.assigned[i].spoolId += 9000;
+  cur.seq++;
+  caption("The spool: each slot, and Bambuddy's inventory spool in it.");
+  spin(600);
+  demo_tap(SPOOL);
+  spin(2200);
+  caption("Assign a spool: pick it from the inventory and hold.");
+  demo_tap(button("Assign"));
+  spin(2000);
+  demo_hold(button_nth("Assign", 2)); // the red one, for the slot with red in it
+  spin(2000);
+  demo_tap(button("Back"));
+
+  // Maintenance.
+  caption("The wrench is amber when maintenance is due.");
+  spin(800);
+  demo_tap(WRENCH);
+  spin(2200);
+  caption("Hold to mark a task done in Bambuddy.");
+  demo_hold(button("Mark done"));
+  spin(1800);
+  demo_tap(button("Back"));
+
+  // Something is wrong.
+  cur.progress = 31; // some time on
+  cur.layer = 63;
+  cur.remainingMin = 86;
+  snprintf(cur.state, sizeof(cur.state), "PAUSE");
+  cur.errorCount = 1;
+  snprintf(cur.errors[0], sizeof(cur.errors[0]), "AMS1 slot 2 filament has run out. Please insert a new filament.");
+  cur.seq++;
+  caption("A problem: the error in words. The LED on the back blinks.");
+  spin(3800);
+  cur.errorCount = 0;
+  cur.seq++;
+  spin(600);
+  demo_tap(button("Resume"));
+  spin(1200);
+
+  // Bambuddy doesn't answer.
+  Snapshot before = cur;
+  cur.reachable = false;
+  cur.httpCode = -11;
+  cur.lostSec = 12;
+  cur.seq++;
+  caption("Bambuddy not answering: the panel says so and locks.");
+  for (int i = 0; i < 3; i++) {
+    spin(1000);
+    cur.lostSec += 4;
+    cur.seq++;
+  }
+  before.seq = cur.seq + 1;
+  before.toastSeq = cur.toastSeq;
+  cur = before;
+  caption("Talks only to your Bambuddy. No cloud, no link to the printer.");
+  demo_print(3000, 31, 34, 125);
+
+  fclose(demoOut);
+  demoOut = nullptr;
+  printf("%d frames %dx%d at %d fps in %s\n", demoFrames, canvasW, canvasH, DEMO_FPS, path.c_str());
+  return 0;
+}
+
 // ---------------------------------------------------------------- the settings web page
 
 struct StdPage : PageText {
@@ -847,7 +1202,7 @@ static int run_web(const std::string &dir)
   struct {
     const char *file;
     PageData d;
-  } pages[5];
+  } pages[6];
   pages[0].file = "1-first-run";
   pages[1].file = "2-wrong-code";
   pages[1].d.msg = "That code doesn't match the one on the panel's screen.";
@@ -866,7 +1221,21 @@ static int run_web(const std::string &dir)
   pages[3].d.kind = "ok";
   pages[3].d.done = true;
   pages[4].file = "5-settings-later";
-  for (int i : {3, 4}) {
+  // A firmware file for another board, refused: fw_check.cpp's own words.
+  static char refused[320];
+  FwCheck other;
+  snprintf(other.board, sizeof(other.board), "cyd-ili9341");
+  fw_refusal(refused, sizeof(refused), FwVerdict::OtherBoard, other, "cyd-st7789");
+  snprintf(refused + strlen(refused), sizeof(refused) - strlen(refused), " The panel keeps running the firmware it had.");
+  pages[5].file = "6-update-refused";
+  pages[5].d.msg = refused;
+  pages[5].d.kind = "e";
+  pages[5].d.typedCode = "abcd-efgh";
+  for (int i : {4, 5}) {
+    pages[i].d.version = "0.1.0";
+    pages[i].d.board = "cyd-st7789";
+  }
+  for (int i : {3, 4, 5}) {
     pages[i].d.url = "http://192.168.1.50:3700";
     pages[i].d.keySaved = true;
     pages[i].d.printerId = 2;
@@ -955,16 +1324,17 @@ static int run_window()
 
 int main(int argc, char **argv)
 {
-  std::string shots, web;
+  std::string shots, web, demo;
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
     if (a == "--live") live = true;
     else if (a == "--shots" && i + 1 < argc) shots = argv[++i];
     else if (a == "--web" && i + 1 < argc) web = argv[++i];
+    else if (a == "--demo" && i + 1 < argc) demo = argv[++i];
     else if (a == "--size" && i + 1 < argc && sscanf(argv[i + 1], "%dx%d", &screenW, &screenH) == 2 &&
              screenW >= 160 && screenW <= 1920 && screenH >= 120 && screenH <= 1080) i++;
     else {
-      fprintf(stderr, "usage: %s [--live | --shots <dir> | --web <dir>] [--size <W>x<H>]\n", argv[0]);
+      fprintf(stderr, "usage: %s [--live | --shots <dir> | --web <dir> | --demo <dir>] [--size <W>x<H>]\n", argv[0]);
       return 2;
     }
   }
@@ -992,5 +1362,6 @@ int main(int argc, char **argv)
 
   lv_init();
   lv_tick_set_cb(millis);
+  if (!demo.empty()) return run_demo(demo);
   return shots.empty() ? run_window() : run_shots(shots);
 }

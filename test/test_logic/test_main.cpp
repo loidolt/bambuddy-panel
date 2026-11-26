@@ -11,6 +11,7 @@
 
 #include "bambuddy_api.h"
 #include "bambuddy_parse.h"
+#include "fw_check.h"
 #include "poller.h"
 #include "setup_page.h"
 #include "touch_cal.h"
@@ -1447,6 +1448,31 @@ static void test_settings_page_states()
   TEST_ASSERT_TRUE(has(first, "action='/save'"));
   TEST_ASSERT_TRUE(has(first, "from Bambuddy's settings")); // no key yet
   TEST_ASSERT_FALSE(has(first, "action='/finish'"));       // only offered when Bambuddy didn't accept
+  TEST_ASSERT_FALSE(has(first, "Firmware"));               // no version given, none shown
+  TEST_ASSERT_FALSE(has(first, "action='/update'"));       // no build name given, no update offered
+
+  d.version = "1.2.3";
+  TextPage versioned;
+  setup_page(versioned, d);
+  TEST_ASSERT_TRUE(has(versioned, "<small>Firmware 1.2.3</small></body>"));
+
+  d.board = "cyd-st7789";
+  TextPage updatable;
+  setup_page(updatable, d);
+  TEST_ASSERT_TRUE(has(updatable, "version <b>1.2.3</b>, build <b>cyd-st7789</b>"));
+  TEST_ASSERT_TRUE(has(updatable, "bambuddy-panel-&lt;version&gt;-cyd-st7789-app.bin")); // which file to pick
+  TEST_ASSERT_TRUE(has(updatable, "Not the <code>-full.bin</code>"));
+  TEST_ASSERT_TRUE(has(updatable, "href='https://github.com/loidolt/bambuddy-panel/releases'"));
+  TEST_ASSERT_TRUE(has(updatable, "enctype='multipart/form-data'"));
+  TEST_ASSERT_TRUE(has(updatable, "name='fw' type='file'"));
+  // The code goes in the address, where the panel can read it before the file arrives.
+  TEST_ASSERT_TRUE(has(updatable, "this.action='/update?code='+encodeURIComponent("));
+  TEST_ASSERT_TRUE(updatable.s.find("action='/update'") > updatable.s.find("action='/save'")); // below the settings
+  d.board = "x<y";
+  TextPage odd;
+  setup_page(odd, d);
+  TEST_ASSERT_FALSE(has(odd, "x<y"));
+  d.board = "cyd-st7789";
 
   d.keySaved = true;
   d.finishAnyway = true;
@@ -1462,6 +1488,137 @@ static void test_settings_page_states()
   setup_page(done, d);
   TEST_ASSERT_TRUE(has(done, "Saved."));
   TEST_ASSERT_FALSE(has(done, "<form")); // nothing left to fill in
+}
+
+// ---------------------------------------------------------------- firmware upload checks
+
+static const size_t ROOM = 0x1E0000; // an application slot
+
+// A pretend firmware file: starts like an application, with `text` somewhere in the filler.
+static std::string image_with(const std::string &text, size_t at = 3000, size_t size = 9000)
+{
+  std::string f(size, '\x5a');
+  f[0] = '\xE9';
+  f.replace(at, text.size(), text);
+  return f;
+}
+
+static FwCheck scan(const std::string &file, size_t piece = 1436)
+{
+  FwCheck c;
+  for (size_t i = 0; i < file.size(); i += piece)
+    fw_check_feed(c, (const uint8_t *)file.data() + i, std::min(piece, file.size() - i));
+  return c;
+}
+
+static void test_firmware_check_finds_the_board()
+{
+  FwCheck c = scan(image_with(FW_BOARD_MARKER "cyd-st7789;"));
+  TEST_ASSERT_TRUE(c.found);
+  TEST_ASSERT_EQUAL_STRING("cyd-st7789", c.board);
+  TEST_ASSERT_EQUAL(FwVerdict::Ok, fw_check_end(c, "cyd-st7789", ROOM));
+  TEST_ASSERT_EQUAL(FwVerdict::OtherBoard, fw_check_end(c, "cyd-ili9341", ROOM));
+  TEST_ASSERT_EQUAL(FwVerdict::OtherBoard, fw_check_end(c, "cyd-st7789-v2", ROOM)); // the whole name counts
+  TEST_ASSERT_EQUAL(FwVerdict::TooBig, fw_check_end(c, "cyd-st7789", 8999));
+  TEST_ASSERT_EQUAL(FwVerdict::Ok, fw_check_end(c, "cyd-st7789", 9000));
+
+  // As it sits in a real image: between other strings, each ending in a zero byte.
+  std::string between = std::string("abc\0", 4) + FW_BOARD_MARKER "esp32-3248s035c;" + std::string("\0def", 4);
+  c = scan(image_with(between));
+  TEST_ASSERT_EQUAL_STRING("esp32-3248s035c", c.board);
+
+  // The firmware also holds the marker alone, where this check looks for it; the name counts.
+  c = scan(image_with(std::string(FW_BOARD_MARKER "\0", sizeof(FW_BOARD_MARKER)) + "zz" FW_BOARD_MARKER "jc2432w328c;"));
+  TEST_ASSERT_EQUAL_STRING("jc2432w328c", c.board);
+  // A marker that starts inside something marker-like.
+  c = scan(image_with("bambuddy-panel-bambuddy-panel-board:" FW_BOARD_MARKER "wt32-sc01;"));
+  TEST_ASSERT_EQUAL_STRING("wt32-sc01", c.board);
+  c = scan(image_with("bambam" FW_BOARD_MARKER "wt32-sc01;"));
+  TEST_ASSERT_EQUAL_STRING("wt32-sc01", c.board);
+  // The first complete stamp is the one.
+  c = scan(image_with(FW_BOARD_MARKER "one;" FW_BOARD_MARKER "two;"));
+  TEST_ASSERT_EQUAL_STRING("one", c.board);
+}
+
+// The web server hands the file over in pieces of its own choosing: wherever the cut falls,
+// through the marker or through the name, the result is the same.
+static void test_firmware_check_across_pieces()
+{
+  const std::string stamp = FW_BOARD_MARKER "cyd-ili9341;";
+  const size_t at = 100;
+  std::string file = image_with(stamp, at, 300);
+  for (size_t cut = at - 1; cut <= at + stamp.size() + 1; cut++) {
+    FwCheck c;
+    fw_check_feed(c, (const uint8_t *)file.data(), cut);
+    fw_check_feed(c, (const uint8_t *)file.data() + cut, file.size() - cut);
+    TEST_ASSERT_TRUE_MESSAGE(c.found, std::to_string(cut).c_str());
+    TEST_ASSERT_EQUAL_STRING("cyd-ili9341", c.board);
+    TEST_ASSERT_EQUAL_UINT(300, c.size);
+  }
+  for (size_t piece : {1, 2, 3, 7, 21, 22, 64}) {
+    FwCheck c = scan(file, piece);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("cyd-ili9341", c.board, std::to_string(piece).c_str());
+  }
+}
+
+static void test_firmware_check_refuses()
+{
+  // No stamp: some other ESP32 program, or a file cut short.
+  FwCheck c = scan(image_with("nothing to see"));
+  TEST_ASSERT_FALSE(c.found);
+  TEST_ASSERT_EQUAL(FwVerdict::NoStamp, fw_check_end(c, "cyd-st7789", ROOM));
+
+  // The marker at the very end, with the name missing, unfinished, or not a name.
+  for (const char *tail : {FW_BOARD_MARKER, FW_BOARD_MARKER "cyd-st77", "bambuddy-panel-boa", FW_BOARD_MARKER ";",
+                           FW_BOARD_MARKER "cyd st7789;", FW_BOARD_MARKER "a-name-much-too-long-to-be-a-build-of-ours;"}) {
+    std::string t = tail;
+    c = scan(image_with(t, 9000 - t.size()));
+    TEST_ASSERT_FALSE_MESSAGE(c.found, tail);
+    TEST_ASSERT_EQUAL(FwVerdict::NoStamp, fw_check_end(c, "cyd-st7789", ROOM));
+  }
+
+  // A -full.bin starts with blank flash; it is refused by its first byte, whatever else it holds.
+  std::string full = image_with(FW_BOARD_MARKER "cyd-st7789;");
+  full[0] = '\xFF';
+  c = scan(full);
+  TEST_ASSERT_EQUAL(FwVerdict::FullBin, fw_check_start(c));
+  TEST_ASSERT_EQUAL(FwVerdict::FullBin, fw_check_end(c, "cyd-st7789", ROOM));
+  full[0] = 'P'; // a zip, say
+  c = scan(full);
+  TEST_ASSERT_EQUAL(FwVerdict::NotImage, fw_check_start(c));
+  TEST_ASSERT_EQUAL(FwVerdict::NotImage, fw_check_end(c, "cyd-st7789", ROOM));
+  TEST_ASSERT_EQUAL(FwVerdict::Empty, fw_check_start(FwCheck()));
+  TEST_ASSERT_EQUAL(FwVerdict::Empty, fw_check_end(FwCheck(), "cyd-st7789", ROOM));
+  c = FwCheck();
+  fw_check_feed(c, (const uint8_t *)"", 0); // an empty piece is not the start
+  fw_check_feed(c, (const uint8_t *)"\xE9", 1);
+  TEST_ASSERT_EQUAL(FwVerdict::Ok, fw_check_start(c));
+}
+
+// What the page says: which board the file is for and which this panel is, and for a -full.bin,
+// which file to take instead.
+static void test_firmware_refusal_says_why()
+{
+  char why[240];
+  FwCheck c = scan(image_with(FW_BOARD_MARKER "cyd-ili9341;"));
+  fw_refusal(why, sizeof(why), FwVerdict::OtherBoard, c, "cyd-st7789");
+  TEST_ASSERT_NOT_NULL(strstr(why, "is for cyd-ili9341; this panel is cyd-st7789"));
+  fw_refusal(why, sizeof(why), FwVerdict::FullBin, c, "cyd-st7789");
+  TEST_ASSERT_NOT_NULL(strstr(why, "Pick the -app.bin"));
+  TEST_ASSERT_NOT_NULL(strstr(why, "-cyd-st7789-app.bin"));
+  fw_refusal(why, sizeof(why), FwVerdict::Ok, c, "cyd-st7789");
+  TEST_ASSERT_EQUAL_STRING("", why);
+  // The longest names there can be still fit, and every refusal says something.
+  const char *longest = "a-name-as-long-as-a-build-can-b";
+  TEST_ASSERT_EQUAL_UINT(sizeof(c.board) - 1, strlen(longest));
+  c = scan(image_with(std::string(FW_BOARD_MARKER) + longest + ";"));
+  TEST_ASSERT_EQUAL_STRING(longest, c.board);
+  for (FwVerdict v : {FwVerdict::Empty, FwVerdict::FullBin, FwVerdict::NotImage, FwVerdict::TooBig, FwVerdict::NoStamp,
+                      FwVerdict::OtherBoard}) {
+    fw_refusal(why, sizeof(why), v, c, longest);
+    TEST_ASSERT_TRUE(strlen(why) > 10 && strlen(why) < sizeof(why) - 1);
+    TEST_ASSERT_NULL(strchr(why, '<')); // goes into the page as it is
+  }
 }
 
 // ---------------------------------------------------------------- touch calibration
@@ -1639,6 +1796,10 @@ int main()
   RUN_TEST(test_poll_round_reads_filament_when_it_should);
   RUN_TEST(test_settings_page_escapes_what_it_is_given);
   RUN_TEST(test_settings_page_states);
+  RUN_TEST(test_firmware_check_finds_the_board);
+  RUN_TEST(test_firmware_check_across_pieces);
+  RUN_TEST(test_firmware_check_refuses);
+  RUN_TEST(test_firmware_refusal_says_why);
   RUN_TEST(test_calibration_every_orientation);
   RUN_TEST(test_calibration_refuses_nonsense);
   RUN_TEST(test_touch_is_clamped_to_the_screen);

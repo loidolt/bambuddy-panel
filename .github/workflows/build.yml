@@ -47,14 +47,14 @@ jobs:
           git diff --exit-code src/icons.c
 
       # Every [env:...] in boards/*.ini. With no names `pio run` would build the default board
-      # alone and pass, so an empty list, or one shorter than the README's, fails here.
+      # alone and pass, so an empty list, or one shorter than the list in docs/boards.md, fails here.
       - name: Firmware, every board
         run: |
           envs=$(grep -ho '^\[env:[^]]*' boards/*.ini | sed 's/^\[env://')
           count=$(echo "$envs" | grep -c .)
           echo "$count boards: $(echo $envs)"
           test "$count" -ge 10
-          for e in $envs; do grep -q "\`$e\`" README.md || { echo "$e is not in the README"; exit 1; }; done
+          for e in $envs; do grep -q "\`$e\`" docs/boards.md || { echo "$e is not in docs/boards.md"; exit 1; }; done
           pio run $(echo "$envs" | sed 's/^/-e /')
 
       # The marker is the OTA host name, which is only compiled in with OTA_PASSWORD: it shows
@@ -76,12 +76,25 @@ jobs:
       - name: Simulator screenshots
         run: ./tools/shots.sh
 
-      - name: README screenshots match the simulator
-        run: python3 tools/compare_shots.py docs/screenshots shots README.md
+      - name: Screenshots in the README and the docs match the simulator
+        run: python3 tools/compare_shots.py docs/screenshots shots README.md docs/*.md
+
+      # The tour behind docs/demo.gif still plays: every button it presses is there. The films
+      # themselves are made by hand (tools/demo.sh) and not compared with anything.
+      - name: Demo tour plays
+        run: ./tools/demo.sh --check
 
       # The same screens on a bigger panel: fails when a button the screenshots press is gone.
       - name: Simulator screenshots at 480x320
         run: ./tools/shots.sh 480x320
+
+      # The other sizes shown in docs/boards.md, compared with their pictures there.
+      - name: Screenshots at the other sizes in the docs
+        run: |
+          for size in 480x272 800x480; do ./tools/shots.sh $size; done
+          for size in 480x320 480x272 800x480; do
+            python3 tools/compare_shots.py docs/screenshots/$size shots/$size docs/boards.md
+          done
 
       # The license texts that go with the firmware files (see THIRD_PARTY.md).
       - name: License notices
