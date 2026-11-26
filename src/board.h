@@ -7,6 +7,11 @@
 #error "No board: SCREEN_W and SCREEN_H come from the board's file in boards/ (see boards/README.md)"
 #endif
 
+// The build's name, e.g. "cyd-st7789": every board gets it from platformio.ini's [esp32].
+#ifndef BOARD_ENV
+#error "No BOARD_ENV: the board's build_flags must include ${esp32.build_flags}"
+#endif
+
 // ---- panel driver: exactly one
 #ifndef PANEL_TFT_ESPI
 #define PANEL_TFT_ESPI 0

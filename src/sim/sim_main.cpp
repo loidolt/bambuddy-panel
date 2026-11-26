@@ -30,6 +30,7 @@
 #include "bambuddy_parse.h"
 #include "checks.h"
 #include "display.h"
+#include "fw_check.h"
 #include "messages.h"
 #include "poller.h"
 #include "scenarios.h"
@@ -847,7 +848,7 @@ static int run_web(const std::string &dir)
   struct {
     const char *file;
     PageData d;
-  } pages[5];
+  } pages[6];
   pages[0].file = "1-first-run";
   pages[1].file = "2-wrong-code";
   pages[1].d.msg = "That code doesn't match the one on the panel's screen.";
@@ -866,7 +867,21 @@ static int run_web(const std::string &dir)
   pages[3].d.kind = "ok";
   pages[3].d.done = true;
   pages[4].file = "5-settings-later";
-  for (int i : {3, 4}) {
+  // A firmware file for another board, refused: fw_check.cpp's own words.
+  static char refused[320];
+  FwCheck other;
+  snprintf(other.board, sizeof(other.board), "cyd-ili9341");
+  fw_refusal(refused, sizeof(refused), FwVerdict::OtherBoard, other, "cyd-st7789");
+  snprintf(refused + strlen(refused), sizeof(refused) - strlen(refused), " The panel keeps running the firmware it had.");
+  pages[5].file = "6-update-refused";
+  pages[5].d.msg = refused;
+  pages[5].d.kind = "e";
+  pages[5].d.typedCode = "abcd-efgh";
+  for (int i : {4, 5}) {
+    pages[i].d.version = "0.1.0";
+    pages[i].d.board = "cyd-st7789";
+  }
+  for (int i : {3, 4, 5}) {
     pages[i].d.url = "http://192.168.1.50:3700";
     pages[i].d.keySaved = true;
     pages[i].d.printerId = 2;

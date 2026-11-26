@@ -1,7 +1,8 @@
 # Draft entry for the Bambuddy wiki
 
-For <https://wiki.bambuddy.cool/community/>, under **Hardware**, once the panel has run on real
-hardware and the repository is public. Written to match the entries already there. Drop the
+For <https://wiki.bambuddy.cool/community/>, under **Hardware**, once every button has been
+pressed against a real Bambuddy, the repository is public and it has a release. The page that
+goes with the card is `docs/wiki/bambuddy-panel.md`. Written to match the entries already there. Drop the
 "Early" box once the panel has been in use for a while.
 
 ---
@@ -28,3 +29,25 @@ simulator that runs the same UI code, for working on screens without hardware.
     The author flags the panel as early: expect rough edges. Track the repo for releases.
 
 **Author:** loidolt · [Repository](https://github.com/loidolt/bambuddy-panel)
+
+---
+
+## The pull request
+
+Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), three changes:
+
+1. `docs/wiki/bambuddy-panel.md` from here goes to `docs/community/bambuddy-panel.md`. Its
+   relative links (`../features/api-keys.md`, `../reference/api.md`) are written for that place.
+2. The card above goes into `docs/community/index.md`, in the Hardware section, in the wiki's
+   card markup, with the heading linking to the page:
+
+   ```markdown
+   <div class="feature-card" markdown>
+   ### [:material-tablet: Bambuddy Panel](bambuddy-panel.md)
+   ...the paragraph and the "Early" box...
+
+   **Author:** [loidolt](https://github.com/loidolt) &middot; [Repository](https://github.com/loidolt/bambuddy-panel)
+   </div>
+   ```
+3. A line in `mkdocs.yml` under `Community Add-ons`, after Bambutton:
+   `- Bambuddy Panel: community/bambuddy-panel.md`

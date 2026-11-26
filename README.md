@@ -14,9 +14,12 @@ with every printer Bambuddy supports.
 
 *Screenshots are from the simulator, at the panel's real 320x240.*
 
-> **Status: early.** Everything here builds, the logic is unit-tested and the screens run in the
-> simulator, but the firmware has **not yet run on a real board**, and none of its commands has
-> been sent to a real Bambuddy yet. Expect rough edges until this note goes away.
+> **Status: early.** It runs on one board, the ESP32-2432S028R with the ST7789 display
+> (`cyd-st7789`): display, touch calibration, WiFi and Bambuddy setup, status, and the filament
+> slots of a real printer. The buttons' commands (pause, stop, plate is clear, start and the
+> rest) are unit-tested against Bambuddy's API as documented, but **have not all been pressed
+> against a real Bambuddy yet**, and no other board has been flashed. Expect rough edges until
+> this note goes away.
 
 ## What it does
 
@@ -93,8 +96,8 @@ Sold under many names. Two display chips are common and both are supported:
 
 | Variant | Build |
 |---|---|
-| ST7789 display (often the board with two USB ports) | `cyd-st7789` (default) |
-| ILI9341 display (often the board with one USB port) | `cyd-ili9341` |
+| ST7789 display (often the board with two USB ports) | `cyd-st7789` (default); the one build that has run on its board |
+| ILI9341 display (often the board with one USB port) | `cyd-ili9341`; not flashed yet |
 
 The USB ports are only a hint; sellers mix them. If the picture stays white or garbled, try the
 other build.
@@ -124,6 +127,49 @@ WiFi and Bambuddy setup. A board without a status LED shows the same things on s
 Each board is one file in `boards/`, and the screens scale themselves to the size they find.
 [boards/README.md](boards/README.md) says how to add one.
 
+## Flash a release
+
+The [releases](https://github.com/loidolt/bambuddy-panel/releases) have a firmware file for
+every build in the tables above. For a board that doesn't run Bambuddy Panel yet, take your
+build's `-full.bin` and write it at address 0x0, with [esptool](https://docs.espressif.com/projects/esptool/)
+(`pip install esptool`):
+
+```bash
+esptool.py --chip esp32 write_flash 0x0 bambuddy-panel-0.1.0-cyd-st7789-full.bin
+```
+
+Any other ESP32 flashing tool does as well, as long as it writes the file at 0x0. A `-full.bin`
+also clears the panel's settings and touch calibration.
+
+### Updating
+
+A panel that runs Bambuddy Panel updates without USB, and keeps its settings and touch
+calibration:
+
+1. Download your build's `-app.bin` from the releases (not the `-full.bin`). The settings page
+   names the build the panel runs.
+2. Open the panel's settings page: the wrench, then hold the **gear**
+   ([Set up a panel](#set-up-a-panel)).
+3. Under **Update firmware**, choose the file. The code on the panel's screen is needed, as for
+   any change. The panel says "Updating", then restarts with the new firmware; it takes about
+   a minute.
+
+The panel refuses a file built for another board, a `-full.bin`, and anything that isn't
+Bambuddy Panel firmware, and keeps running what it had. If the upload is cut off, it does too.
+
+The panel never fetches firmware itself; it still talks only to your Bambuddy. Over USB, the
+same file goes to 0x10000:
+
+```bash
+esptool.py --chip esp32 write_flash 0x10000 bambuddy-panel-0.1.1-cyd-st7789-app.bin
+```
+
+That is also the way back if a new firmware starts but doesn't work: the panel doesn't return
+to the old one by itself.
+
+Released firmware has pushed updates over WiFi (ArduinoOTA) switched off; for those, build your
+own (below).
+
 ## Build and flash
 
 Needs [PlatformIO](https://platformio.org/install/cli).
@@ -150,8 +196,10 @@ is added as a new line.
 | Colours look like a negative | `TFT_INVERSION_OFF` to `TFT_INVERSION_ON` | `-DTFT_INVERSION_ON=1` |
 | Touch lands in the wrong place | Recalibrate (see below) | Recalibrate (see below) |
 
-Once a minute the serial monitor shows the free memory and the background task's spare stack
-(`[health] ...`), which helps when reporting a problem.
+The serial monitor shows the firmware's version at start-up (`[boot] ...`) and, once a minute,
+the version, the free memory and the background task's spare stack (`[health] ...`), which
+helps when reporting a problem. The settings page has the version at its foot. A build of your
+own is version `dev`.
 
 ## Set up a panel
 
@@ -234,7 +282,15 @@ these ways. If the WiFi is down when a panel that's set up starts, it says so an
   It never shows the saved API key, and the key is only kept for the Bambuddy URL it was saved
   with: change the URL and it must be entered again, so nobody at the panel can have it sent
   to a server of their own.
-- **Updates over WiFi** are off unless you build them in with a password (see below).
+- **Firmware update.** The settings page takes a new firmware file, so it is open only when
+  that page is, and needs the same code: whoever can see the panel's screen can put other
+  firmware on it. The file is not signed. The panel checks that it is an application built for
+  this board, which guards against a wrong file, not against a tampered one; download it from
+  the releases yourself and compare it with `SHA256SUMS.txt` if in doubt. The upload is plain
+  HTTP like the rest of the page. There is no automatic way back: firmware that starts but
+  hangs needs USB to replace.
+- **Pushed updates over WiFi** (ArduinoOTA) are off unless you build them in with a password
+  (see below).
 
 ## Simulator
 
@@ -311,9 +367,14 @@ a second size, which shows that nothing crashes there and every button the scree
 still exists; how the screens look at that size is not compared with anything. A warning in the
 panel's own code (`src/`) fails every build; the test file itself is compiled without that.
 
+A tag like `v0.1.0` builds every board as that version and puts the firmware files and the
+license texts into a draft release (`.github/workflows/release.yml`), to be looked over and
+published by hand.
+
 ## Updates over WiFi
 
-Off unless built with a password of at least 8 characters (the build fails on a shorter one).
+This is for development: pushing a build from PlatformIO. To update a panel with a release, see
+[Updating](#updating). Off unless built with a password of at least 8 characters (the build fails on a shorter one).
 Put it in `platformio_override.ini` (ignored by git, read when it is there), as a build of your
 own on top of your board's:
 
@@ -335,7 +396,8 @@ itself is neither encrypted nor signed, and the password is in the firmware file
 
 ## How it talks to Bambuddy
 
-REST only, with the `X-API-Key` header. Written against Bambuddy 1.3.1.
+REST only, with the `X-API-Key` header. Written against Bambuddy 1.3.1. The panel names itself
+in `User-Agent` (`bambuddy-panel/0.1.0`), so Bambuddy's log shows which firmware asked.
 
 | When | Request |
 |---|---|
@@ -376,8 +438,11 @@ and runs between two reads rather than after a whole round.
 | `src/drivers/` | One file per panel or touch chip; the board picks |
 | `src/calibrate.*`, `src/touch_cal.*` | Touch calibration: the screen flow, and the maths |
 | `src/settings.*` | Settings kept in flash |
+| `src/setup_web.cpp`, `src/setup_page.*` | The settings page: the web server with the code check and the firmware upload; the page's text |
+| `src/fw_check.*` | Checks an uploaded firmware file: an application, and built for this board |
 | `src/icons.*` | Icons, made by `tools/make_icons.py` from the SVGs in `tools/icons/` |
 | `src/board.h` | Checks the board's description is complete |
+| `src/version.h` | The firmware's version: `dev`, or the tag a release was built from |
 | `boards/` | One file per board: chip, pins, screen size, drivers. [How to add one](boards/README.md) |
 | `platformio.ini` | What every build shares; the simulator and test builds |
 | `src/sim/` | Desktop simulator and its made-up states |
@@ -385,14 +450,17 @@ and runs between two reads rather than after a whole round.
 
 ## Not done yet
 
-- First run on real hardware, and fixing what that turns up.
+- Every button pressed against a real Bambuddy, a first run of the boards other than
+  `cyd-st7789`, and fixing what those turn up.
 - Lock or PIN on the controls.
 - Switching the printer on through its smart plug, and holding the next queued job back:
   both need checking against a running Bambuddy first (docs/ux-deep-dive-plan.md, 3.4).
 - Spool assignment when Bambuddy keeps its spools in Spoolman.
 - Accented letters (Latin-1 fonts); the finish time as a clock time.
 - Backlight dimming from the light sensor.
-- Prebuilt firmware and a browser flasher, so nobody needs PlatformIO to try it.
+- A browser flasher, so nobody needs a command line to try it.
+- Signed firmware, and going back to the old firmware by itself when a new one doesn't work.
+- Telling you that a newer release exists.
 - A printable case.
 
 ## License

@@ -1,0 +1,31 @@
+name: Board report
+description: You flashed a board whose profile was untested, or want a new board supported
+body:
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      description: The name printed on it or in the listing, and where the pins are documented if you know.
+      placeholder: ESP32-3248S035C
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Build and firmware version
+      placeholder: esp32-3248s035c, 0.1.0
+  - type: checkboxes
+    id: works
+    attributes:
+      label: What works
+      options:
+        - label: Picture, right way up, right colours
+        - label: Touch lands where the finger is
+        - label: Backlight dims after a minute
+        - label: Status LED (if the board has one)
+        - label: WiFi and Bambuddy setup
+  - type: textarea
+    id: changes
+    attributes:
+      label: What you had to change
+      description: Flags in the board's file (boards/README.md lists the likely ones), or anything else.

@@ -14,11 +14,12 @@ added by adding a file; nothing else lists the boards.
 
 All are an ESP32 with an SPI panel, so they share one panel driver.
 
-### None of these has run on the real board yet
+### Only `cyd-st7789` has run on the real board yet
 
-Every profile builds, and the simulator draws every screen at both sizes without failing (at
-320x240 the pictures are compared with the README's; at 480x320 nobody but you looks at them),
-but nobody has flashed one. The pins are taken from board definitions other projects use on these boards
+That one works: picture, touch calibration, backlight, setup. Every other profile builds, and
+the simulator draws every screen at both sizes without failing (at 320x240 the pictures are
+compared with the README's; at 480x320 nobody but you looks at them), but nobody has flashed
+one. The pins are taken from board definitions other projects use on these boards
 ([rzeldent/platformio-espressif32-sunton](https://github.com/rzeldent/platformio-espressif32-sunton)
 and [openHASP](https://github.com/HASwitchPlate/openHASP)); what those can't settle is how this
 firmware's drivers behave on them. If you have one, flash it and report what you see. What to
