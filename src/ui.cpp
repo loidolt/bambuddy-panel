@@ -1021,6 +1021,7 @@ static void draw(const Snapshot &s)
   case View::PlateClear: draw_queue(s, true, 2); break;
   case View::Ready:      draw_queue(s, false, why ? 0 : 2); break;
   case View::QueueHeld:  draw_queue(s, true, 2); break;
+  case View::Sending:    draw_queue(s, true, 2); break; // what comes after the one starting
   case View::Idle:       draw_queue(s, true, QUEUE_ROWS); break;
   default:               draw_queue(s, true, 0); break;
   }
@@ -1055,7 +1056,8 @@ static void update_led(const Snapshot &s)
   bool on = (millis() / 500) % 2 == 0;
   if (link_lost(s)) return display_led(on, false, on);
   switch (view) {
-  case View::Printing:      display_led(false, false, true); break;
+  case View::Printing:
+  case View::Sending:       display_led(false, false, true); break;
   case View::Paused:        display_led(on, on, false); break;
   case View::QueueHeld:     display_led(on, on, false); break;
   case View::Verdict:       display_led(false, on, on); break;
@@ -1072,6 +1074,7 @@ static bool wants_someone()
 {
   switch (view) {
   case View::Printing:
+  case View::Sending:
   case View::Idle:
   case View::PrinterOffline: return false;
   default:                   return true;

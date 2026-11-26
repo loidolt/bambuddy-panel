@@ -35,6 +35,7 @@ View pick_view(const Snapshot &s, const ViewOptions &o)
   }
   if (s.connected && is(s, "PAUSE")) return View::Paused;
   if (s.connected && active(s)) return View::Printing;
+  if (s.connected && s.sending) return View::Sending;
   // Bambuddy-side questions come next. They don't need the printer: with Auto Power Off it is
   // switched off exactly when the plate wants clearing.
   bool skipped = s.archiveId == o.skippedArchive && s.runId == o.skippedRun;
@@ -64,6 +65,13 @@ void pick_face(View v, const Snapshot &s, Face &f)
       format_duration(dur, sizeof(dur), s.remainingMin);
       snprintf(f.sub, sizeof(f.sub), "About %s once it starts", dur);
     }
+    break;
+  case View::Sending:
+    f.chip = "Starting";
+    f.chipTone = Tone::Neutral;
+    snprintf(f.headline, sizeof(f.headline), "%s", s.runningName[0] ? s.runningName : "A print");
+    f.headlineIsName = true;
+    snprintf(f.sub, sizeof(f.sub), "Sent to the printer. Waiting for it to begin.");
     break;
   case View::Paused:
     f.chip = "Paused";

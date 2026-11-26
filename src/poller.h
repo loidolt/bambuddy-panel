@@ -26,6 +26,9 @@ struct Poller {
   int refusedArchive = 0, refusedRun = 0;
   int misses = 0; // status requests in a row with no answer
   uint32_t answeredAt = 0; // when the last status came
+  // The queue item the printer was last seen at work on. The same item still "printing" on a
+  // printer that has stopped is a print that just ended, not one about to begin.
+  int workedOnId = 0;
   bool assignedStale = true;
   uint32_t assignedPolledAt = 0;
   // The spool list is read when the filament screen asks for it, not on a timer: it is big.

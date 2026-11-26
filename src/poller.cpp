@@ -45,6 +45,13 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
     if (fetch(path, doc, filter, ctx) == 200) parse_queue(doc, p.printerId, s); // else keep the last known
   }
 
+  // Between Bambuddy sending a job and the printer taking it up, the printer still reports
+  // whatever it was doing before (idle, or the last print finished) and the queue no longer
+  // lists the job as waiting. Bambuddy's queue says "printing" for it all the same.
+  bool atWork = is(s, "RUNNING") || is(s, "PAUSE") || is(s, "PREPARE") || is(s, "SLICING");
+  if (atWork && s.runningId != 0) p.workedOnId = s.runningId;
+  s.sending = s.connected && !atWork && s.runningId != 0 && s.runningId != p.workedOnId;
+
   // The outcome question belongs to a finished print; while one is under way there is none.
   if (is(s, "RUNNING") || is(s, "PAUSE") || is(s, "PREPARE") || is(s, "SLICING")) {
     s.verdictPending = false;

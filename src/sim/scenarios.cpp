@@ -383,6 +383,19 @@ static Snapshot idle_starting_soon()
   return s;
 }
 
+// Bambuddy has sent the job; the printer still shows the last print as finished.
+static Snapshot sending()
+{
+  Snapshot s = idle();
+  SET(s.state, "FINISH");
+  SET(s.job, "Fidget_gears_plate_2");
+  s.runningId = 42;
+  SET(s.runningName, "Articulated_dragon_plate_1");
+  s.sending = true;
+  queue_next(s, "Cable_clips_x24", 47 * 60, 1, false);
+  return s;
+}
+
 // The plate gate with a job that needs its own start: clearing the plate starts nothing.
 static Snapshot finished_next_manual()
 {
@@ -519,6 +532,7 @@ const Scenario scenarios[] = {
     {"ready-queued-more", ready_queued_more},
     {"idle-waiting-filament", idle_waiting_filament},
     {"idle-starting-soon", idle_starting_soon},
+    {"sending", sending},
     {"finished-next-manual", finished_next_manual},
     {"printing-one-missed", printing_one_missed},
     {"link-lost", link_lost},

@@ -83,6 +83,11 @@ struct Snapshot {
   QueuedJob more[MAX_MORE]; // the jobs after it, in order
   int moreCount = 0;
   char jobBy[20] = "";     // who queued the print under way, when it came from the queue
+  // The queue item Bambuddy counts as printing on this printer. Bambuddy says so from the
+  // moment it has sent the job, which is before the printer says it is doing anything.
+  int runningId = 0;
+  char runningName[64] = "";
+  bool sending = false;    // that job has been sent and the printer has not taken it up yet
   int held = 0;            // items Bambuddy skipped because the previous print failed
 
   // Bambuddy's "ask for outcome": the last print waits for a good / bad answer.

@@ -1178,6 +1178,59 @@ static void test_temperatures()
   TEST_ASSERT_EQUAL_STRING("", out);
 }
 
+// From "Starting soon" straight to "Printing": between Bambuddy sending a job and the printer
+// taking it up, the panel must not say "Nothing queued".
+static void test_a_sent_job_shows_until_the_printer_takes_it_up()
+{
+  FakeBambuddy b;
+  b.status = R"({"name": "X1C", "connected": true, "state": "FINISH", "subtask_name": "Old_job"})"; // the last print
+  b.lastPrints = "[]";
+  b.queue = R"([{"id": 9, "position": 1, "status": "pending", "printer_id": 1, "library_file_name": "Dragon.3mf"}])";
+  Poller p;
+  p.printerId = 1;
+  Snapshot s;
+  ViewOptions o;
+  Face f;
+  poll_once(p, s, fake_fetch, &b);
+  TEST_ASSERT_EQUAL(View::Idle, pick_view(s, o));
+  pick_face(View::Idle, s, f);
+  TEST_ASSERT_EQUAL_STRING("Starting soon", f.headline);
+
+  // Sent: the queue says "printing", the printer still says what it said before.
+  b.queue = R"([{"id": 9, "position": 1, "status": "printing", "printer_id": 1, "library_file_name": "Dragon.3mf"},
+               {"id": 4, "position": 0, "status": "printing", "printer_id": 2, "library_file_name": "Elsewhere.3mf"}])";
+  poll_once(p, s, fake_fetch, &b);
+  TEST_ASSERT_TRUE(s.sending);
+  TEST_ASSERT_EQUAL(View::Sending, pick_view(s, o));
+  pick_face(View::Sending, s, f);
+  TEST_ASSERT_EQUAL_STRING("Starting", f.chip);
+  TEST_ASSERT_EQUAL_STRING("Dragon", f.headline); // this printer's job, not the other printer's
+  Action a[MAX_ACTIONS];
+  TEST_ASSERT_EQUAL_INT(0, pick_actions(View::Sending, s, a));
+
+  b.status = R"({"name": "X1C", "connected": true, "state": "PREPARE", "subtask_name": "Dragon"})";
+  poll_once(p, s, fake_fetch, &b);
+  TEST_ASSERT_FALSE(s.sending);
+  TEST_ASSERT_EQUAL(View::Printing, pick_view(s, o));
+
+  // The print ends before Bambuddy has closed the queue item: that is not a start.
+  b.status = R"({"name": "X1C", "connected": true, "state": "FINISH", "subtask_name": "Dragon"})";
+  poll_once(p, s, fake_fetch, &b);
+  TEST_ASSERT_FALSE(s.sending);
+  TEST_ASSERT_EQUAL(View::Idle, pick_view(s, o));
+
+  // The next job is sent: a start again.
+  b.queue = R"([{"id": 10, "position": 1, "status": "printing", "printer_id": 1, "library_file_name": "Next.3mf"}])";
+  poll_once(p, s, fake_fetch, &b);
+  TEST_ASSERT_TRUE(s.sending);
+
+  // A printer Bambuddy can't reach is offline, whatever the queue says.
+  b.status = R"({"name": "X1C", "connected": false, "state": ""})";
+  poll_once(p, s, fake_fetch, &b);
+  TEST_ASSERT_FALSE(s.sending);
+  TEST_ASSERT_EQUAL(View::PrinterOffline, pick_view(s, o));
+}
+
 // ---------------------------------------------------------------- filament
 
 static void test_status_lists_the_slots()
@@ -1578,6 +1631,7 @@ int main()
   RUN_TEST(test_durations);
   RUN_TEST(test_due_text);
   RUN_TEST(test_temperatures);
+  RUN_TEST(test_a_sent_job_shows_until_the_printer_takes_it_up);
   RUN_TEST(test_status_lists_the_slots);
   RUN_TEST(test_assignments_for_this_printer);
   RUN_TEST(test_spool_list_and_pages);

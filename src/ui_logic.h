@@ -10,6 +10,7 @@ enum class View {
   CheckSettings,  // Bambuddy said no, or the address can't work: waiting won't help
   PrinterOffline,
   Printing,       // and getting ready to (see preparing())
+  Sending,        // Bambuddy has sent the job; the printer hasn't taken it up yet
   Paused,
   Verdict,
   PlateClear,

@@ -233,7 +233,8 @@ void parse_queue(JsonDocument &doc, int printerId, Snapshot &s)
   s.queued = 0;
   s.held = 0;
   s.nextId = 0;
-  s.nextName[0] = s.nextWhy[0] = s.nextBy[0] = s.jobBy[0] = 0;
+  s.nextName[0] = s.nextWhy[0] = s.nextBy[0] = s.jobBy[0] = s.runningName[0] = 0;
+  s.runningId = 0;
   s.nextManual = false;
   s.nextAssigned = false;
   s.nextSeconds = 0;
@@ -253,7 +254,11 @@ void parse_queue(JsonDocument &doc, int printerId, Snapshot &s)
     }
     if (strcmp(status, "printing") == 0) {
       // The print under way, when it came from the queue: who put it there.
-      if ((item["printer_id"] | 0) == printerId) copy_ascii(s.jobBy, sizeof(s.jobBy), item["created_by_username"]);
+      if ((item["printer_id"] | 0) == printerId) {
+        copy_ascii(s.jobBy, sizeof(s.jobBy), item["created_by_username"]);
+        s.runningId = item["id"] | 0;
+        copy_name(s.runningName, sizeof(s.runningName), item_name(item));
+      }
       continue;
     }
     if (strcmp(status, "pending") != 0) continue;
