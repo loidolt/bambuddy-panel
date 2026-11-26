@@ -79,6 +79,11 @@ jobs:
       - name: README screenshots match the simulator
         run: python3 tools/compare_shots.py docs/screenshots shots README.md
 
+      # The tour behind docs/demo.gif still plays: every button it presses is there. The films
+      # themselves are made by hand (tools/demo.sh) and not compared with anything.
+      - name: Demo tour plays
+        run: ./tools/demo.sh --check
+
       # The same screens on a bigger panel: fails when a button the screenshots press is gone.
       - name: Simulator screenshots at 480x320
         run: ./tools/shots.sh 480x320

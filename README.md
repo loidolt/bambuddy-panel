@@ -8,6 +8,11 @@ One panel per printer. It runs on the inexpensive ESP32-2432S028R ("Cheap Yellow
 talks only to your Bambuddy server over WiFi, never to the printer or to any cloud, so it works
 with every printer Bambuddy supports.
 
+![A minute with the panel: starting a queued job, the print, the outcome question, clearing the plate, assigning a spool, maintenance, an error](docs/demo.gif)
+
+*A minute with the panel, from the simulator: the panel's own screens, a made-up printer. The
+dot is a finger, the lamp under the screen is the LED on the board's back.*
+
 | Printing | Print finished | Outcome question | Maintenance |
 |---|---|---|---|
 | ![Printing](docs/screenshots/printing.png) | ![Finished](docs/screenshots/finished.png) | ![Outcome](docs/screenshots/verdict.png) | ![Maintenance](docs/screenshots/maintenance.png) |
@@ -322,6 +327,15 @@ states, on one page to scroll through (`shots/index.html`):
 
 ```bash
 ./tools/shots.sh all
+```
+
+The film at the top of this page, again after the screens have changed (needs `ffmpeg`). It
+is a scripted tour, `run_demo` in `src/sim/sim_main.cpp`, on a clock of its own, so it comes out
+the same every time; it writes `docs/demo.gif`, and `docs/demo.mp4` and `docs/demo.webm` for
+web pages:
+
+```bash
+./tools/demo.sh
 ```
 
 Another screen size, for a board that isn't 320x240. `--size` works with the window and with
