@@ -43,3 +43,5 @@ int spools_materials(const SpoolStore &st, char out[][SPOOL_MATERIAL], int max);
 void spool_name(char *out, size_t size, const char *brand, const char *subtype, const char *color);
 // A colour as Bambuddy sends it, "RRGGBBAA" or "RRGGBB" with or without #. 0 when unreadable.
 uint32_t parse_rgb(const char *hex);
+
+int bounded_grams(float grams);

@@ -24,7 +24,9 @@ bool link_lost(const Snapshot &s)
   return !s.reachable && s.everReachable && !settings_are_wrong(s.httpCode) && s.lostSec < LINK_LOST_GIVE_UP_S;
 }
 
-bool next_starts_by_itself(const Snapshot &s) { return s.nextId != 0 && !s.nextManual && !s.nextWhy[0]; }
+static bool idle_state(const Snapshot &s) { return is(s, "IDLE") || is(s, "FINISH") || is(s, "FAILED"); }
+
+bool next_starts_by_itself(const Snapshot &s) { return s.nextId != 0 && s.nextAssigned && !s.nextManual && !s.nextWhy[0]; }
 
 View pick_view(const Snapshot &s, const ViewOptions &o)
 {
@@ -43,9 +45,74 @@ View pick_view(const Snapshot &s, const ViewOptions &o)
   if (s.awaitingPlateClear && s.requirePlateClear) return View::PlateClear;
   if (!s.connected) return View::PrinterOffline;
   if (s.errorCount > 0) return View::Error;
-  if (s.nextId != 0 && s.nextManual && s.nextAssigned) return View::Ready;
-  if (s.held > 0) return View::QueueHeld;
+  if (idle_state(s) && s.nextId != 0 && s.nextManual && s.nextAssigned &&
+      (!s.awaitingPlateClear || s.settingsKnown)) return View::Ready;
+  if (idle_state(s) && s.held > 0) return View::QueueHeld;
   return View::Idle;
+}
+
+CommandTarget command_target(const Job &job, const Snapshot &s)
+{
+  if (!s.reachable || s.httpCode != 200 || s.printerId <= 0) return {};
+  CommandTarget target = {s.printerId, 0, 0, 0, 0};
+  switch (job.cmd) {
+  case Command::Pause:
+  case Command::Resume:
+  case Command::Stop:
+    if ((!s.runningId && !s.currentArchive && !s.job[0]) || !s.connected || !active(s) || (job.cmd == Command::Pause && is(s, "PAUSE")) ||
+        (job.cmd == Command::Resume && !is(s, "PAUSE"))) return {};
+    target.item = s.runningId;
+    target.related = s.currentArchive;
+    target.file = s.fileIdentity;
+    break;
+  case Command::ClearPlate:
+    if (!s.queueKnown || !s.lastPrintKnown || !s.requirePlateClear || !s.awaitingPlateClear || (s.connected && (active(s) || s.sending))) return {};
+    target.next = s.nextId;
+    target.item = s.archiveId;
+    target.related = s.runId;
+    target.file = s.fileIdentity;
+    break;
+  case Command::ClearErrors:
+    if (!s.connected || !s.errorCount || active(s)) return {};
+    target.item = s.errorCount;
+    target.file = s.errorIdentity;
+    break;
+  case Command::ResumeQueue:
+    if (!s.connected || !idle_state(s) || !s.held || s.sending) return {};
+    target.file = s.heldIdentity;
+    target.item = s.held;
+    break;
+  case Command::StartNext:
+    if (!s.connected || !idle_state(s) || s.sending || !s.nextManual || !s.nextAssigned ||
+        job.arg <= 0 || job.arg != s.nextId || s.errorCount || (s.awaitingPlateClear && (!s.settingsKnown || s.requirePlateClear))) return {};
+    target.item = job.arg;
+    break;
+  case Command::VerdictGood:
+  case Command::VerdictReject:
+    if (!s.verdictPending || job.arg2 <= 0 || job.arg <= 0 || job.arg != s.archiveId || job.arg2 != s.runId) return {};
+    break;
+  case Command::PerformTask:
+    for (int i = 0; s.tasksKnown && i < s.taskCount; ++i)
+      if (job.arg > 0 && s.tasks[i].id == job.arg) {
+        target.file = s.tasks[i].lastPerformed;
+        return target;
+      }
+    return {};
+  case Command::AssignSpool:
+  case Command::UnassignSpool:
+    for (int i = 0; s.assignedKnown && i < s.slotCount; ++i) {
+      const Slot &slot = s.slots[i];
+      if (slot_code(slot.ams, slot.tray) != job.arg2) continue;
+      target.related = int(slot.rgb) | (slot.empty ? 1 << 24 : 0);
+      const Assignment *old = assignment_of(s, slot);
+      target.item = old ? old->spoolId : 0;
+      if (job.cmd == Command::UnassignSpool ? !old : job.arg <= 0 || job.arg == target.item) return {};
+      return target;
+    }
+    return {};
+  case Command::LoadSpools: return {};
+  }
+  return target;
 }
 
 void pick_face(View v, const Snapshot &s, Face &f)
@@ -92,8 +159,8 @@ void pick_face(View v, const Snapshot &s, Face &f)
     else snprintf(f.headline, sizeof(f.headline), "Print finished");
     if (!s.connected && s.nextId == 0) snprintf(f.sub, sizeof(f.sub), "Printer is switched off");
     else if (s.nextId == 0) snprintf(f.sub, sizeof(f.sub), "Nothing else queued");
-    else if (next_starts_by_itself(s)) snprintf(f.sub, sizeof(f.sub), "Starts when the plate is clear:");
-    else snprintf(f.sub, sizeof(f.sub), "Next, not starting by itself:");
+    else if (next_starts_by_itself(s)) snprintf(f.sub, sizeof(f.sub), "Waiting for the plate:");
+    else snprintf(f.sub, sizeof(f.sub), "Next in the queue:");
     break;
   }
   case View::Error:
@@ -170,7 +237,7 @@ int pick_actions(View v, const Snapshot &s, Action out[MAX_ACTIONS])
     break;
   case View::PlateClear:
     // Says what holding it does: with a job waiting to start by itself, it starts that job.
-    add({next_starts_by_itself(s) ? "Hold: plate is clear,\nstart the next print" : "Hold when plate is clear",
+    add({next_starts_by_itself(s) ? "Hold: plate is clear,\nrelease the queue" : "Hold when plate is clear",
          "Clearing...", Command::ClearPlate, true, Kind::Go, Icon::Check, 0, 0});
     break;
   case View::Error:

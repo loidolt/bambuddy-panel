@@ -1,4 +1,5 @@
 #include "poller.h"
+#include "response_json.h"
 #include "bambuddy_api.h"
 #include "bambuddy_parse.h"
 
@@ -14,10 +15,12 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
   char path[96];
   s.printerId = p.printerId;
   {
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     status_filter(filter);
     snprintf(path, sizeof(path), "/api/v1/printers/%d/status", p.printerId);
     s.httpCode = fetch(path, doc, filter, ctx);
+    if (s.httpCode == 200 && !doc["connected"].is<bool>()) s.httpCode = ERR_BAD_JSON;
     if (s.httpCode == 200) {
       p.misses = 0;
       p.answeredAt = millis();
@@ -31,6 +34,11 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
       bool noAnswer = s.httpCode < 0 && s.httpCode != ERR_HTTPS && s.httpCode != ERR_BAD_URL;
       if (!(noAnswer && s.reachable && ++p.misses < OFFLINE_AFTER)) s.reachable = false;
       if (s.everReachable) s.lostSec = (int)((millis() - p.answeredAt) / 1000);
+      if (p.spoolsWanted && p.spools) {
+        p.spoolsWanted = false;
+        p.spools->state = SpoolState::Failed;
+        p.spools->code = s.httpCode;
+      }
       s.seq++;
       return;
     }
@@ -39,10 +47,12 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
   {
     // Pending items (the printer's own and "any <model>" ones; Bambuddy adds those itself), and
     // the ones it skipped after a failed print, which "resume queue" would put back.
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     queue_filter(filter);
     snprintf(path, sizeof(path), "/api/v1/queue/?status=pending,skipped,printing&printer_id=%d", p.printerId);
-    if (fetch(path, doc, filter, ctx) == 200) parse_queue(doc, p.printerId, s); // else keep the last known
+    if (fetch(path, doc, filter, ctx) != 200 || !doc.is<JsonArray>()) doc.clear();
+    parse_queue(doc, p.printerId, s);
   }
 
   // Between Bambuddy sending a job and the printer taking it up, the printer still reports
@@ -56,8 +66,12 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
   if (is(s, "RUNNING") || is(s, "PAUSE") || is(s, "PREPARE") || is(s, "SLICING")) {
     s.verdictPending = false;
   } else {
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     last_print_filter(filter);
+    s.verdictPending = false;
+    s.lastPrintKnown = false;
+    s.archiveId = s.runId = 0;
     if (fetch("/api/v1/archives/last-per-printer", doc, filter, ctx) == 200) {
       parse_last_print(doc, p.printerId, s);
       if (s.verdictPending && s.archiveId == p.refusedArchive && s.runId == p.refusedRun) s.verdictPending = false;
@@ -65,9 +79,12 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
   }
 
   if (due(p.tasksStale, p.tasksPolledAt, TASKS_POLL_MS)) {
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     tasks_filter(filter);
     snprintf(path, sizeof(path), "/api/v1/maintenance/printers/%d", p.printerId);
+    s.tasksKnown = false;
+    s.taskCount = s.tasksDue = s.tasksWarn = 0;
     if (fetch(path, doc, filter, ctx) == 200) parse_tasks(doc, s);
     // Also after a failure: try again in a minute, not on every poll.
     p.tasksStale = false;
@@ -75,8 +92,10 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
   }
 
   if (due(p.settingsStale, p.settingsPolledAt, SETTINGS_POLL_MS)) {
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     settings_filter(filter);
+    s.settingsKnown = s.requirePlateClear = false;
     if (fetch("/api/v1/settings/", doc, filter, ctx) == 200) parse_settings(doc, s);
     p.settingsStale = false;
     p.settingsPolledAt = millis();
@@ -84,19 +103,24 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
 
   // Only for a printer that has somewhere to put a spool.
   if (s.slotCount > 0 && due(p.assignedStale, p.assignedPolledAt, ASSIGNED_POLL_MS)) {
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     assignments_filter(filter);
     snprintf(path, sizeof(path), "/api/v1/inventory/assignments?printer_id=%d", p.printerId);
-    if (fetch(path, doc, filter, ctx) == 200) parse_assignments(doc, p.printerId, s);
+    s.assignedKnown = false;
+    s.assignedCount = 0;
+    if (fetch(path, doc, filter, ctx) == 200 && doc.is<JsonArray>()) parse_assignments(doc, p.printerId, s);
     p.assignedStale = false;
     p.assignedPolledAt = millis();
   }
 
   if (p.spoolsWanted && p.spools) {
     p.spoolsWanted = false;
-    JsonDocument filter, doc;
+    JsonDocument filter;
+    ResponseDocument doc;
     spools_filter(filter);
     int code = fetch("/api/v1/inventory/spools", doc, filter, ctx);
+    if (code == 200 && !doc.is<JsonArray>()) code = ERR_BAD_JSON;
     if (code != 200 || !parse_spools(doc, *p.spools)) {
       p.spools->state = SpoolState::Failed;
       p.spools->code = code == 200 ? ERR_NO_MEMORY : code;

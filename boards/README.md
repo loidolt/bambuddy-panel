@@ -18,8 +18,7 @@ All are an ESP32 with an SPI panel, so they share one panel driver.
 
 That one works: picture, touch calibration, backlight, setup. Every other profile builds, and
 the simulator draws every screen at both sizes without failing (at 320x240 the pictures are
-compared with the ones in `docs/screenshots/`; at 480x320 nobody but you looks at them), but nobody has flashed
-one. The pins are taken from board definitions other projects use on these boards
+compared with the ones in `docs/screenshots/`; two reference images are checked at each larger documented size), but only the ST7789 CYD has been tried on hardware. The pins are taken from board definitions other projects use on these boards
 ([rzeldent/platformio-espressif32-sunton](https://github.com/rzeldent/platformio-espressif32-sunton)
 and [openHASP](https://github.com/HASwitchPlate/openHASP)); what those can't settle is how this
 firmware's drivers behave on them. If you have one, flash it and report what you see. What to
@@ -142,3 +141,5 @@ Not there yet, and each needs a small change outside the driver when its first b
 a backlight the panel driver controls (AMOLED), and a draw buffer in PSRAM. Both come with the
 ESP32-S3 boards with 4.3" to 7" RGB panels (ESP32-8048S043, -S050, -S070 and their like), which
 are the next family worth adding.
+
+Give each physical profile a stable `BOARD_ENV` in its build flags. Custom environments that extend the profile inherit its firmware-update compatibility marker.

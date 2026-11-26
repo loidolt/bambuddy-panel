@@ -20,7 +20,8 @@
 #include <SDL2/SDL.h>
 #include <lvgl.h>
 
-#include <unistd.h>
+#include <curl/curl.h>
+#include <climits>
 
 #include <chrono>
 #include <cctype>
@@ -218,15 +219,17 @@ static void apply(const Job &job)
 
 // A command takes Bambuddy a moment, as it does on the panel: the answer comes after
 // `answerAfterMs`, and the made-up state is "read again" a little after that.
+static unsigned mockCommands = 0;
 static int answerAfterMs = 500;
 static const int SETTLE_MS = 400;
 static struct {
   bool waiting = false, settling = false;
   Job job;
+  uint32_t request;
   uint32_t at = 0;
 } sent;
 
-bool bambuddy_send(Command c, int arg, int arg2)
+bool bambuddy_send(Command c, int arg, int arg2, CommandTarget, uint32_t request)
 {
   if (c == Command::LoadSpools) { // nothing is sent: the list is read again
     inventory.state = SpoolState::Loading;
@@ -234,7 +237,9 @@ bool bambuddy_send(Command c, int arg, int arg2)
     return true;
   }
   if (sent.waiting) return false;
+  ++mockCommands;
   sent.job = {c, arg, arg2};
+  sent.request = request;
   sent.waiting = true;
   sent.at = millis();
   return true;
@@ -252,10 +257,12 @@ static void bambuddy_tick()
   }
   if (sent.waiting && millis() - sent.at >= (uint32_t)answerAfterMs) {
     sent.waiting = false;
+    cur.answeredRequest = sent.request;
     Request r;
     bool any = command_request(sent.job, live ? atoi(getenv("BAMBUDDY_PRINTER")) : 1, r);
     printf("[sim] would send: %s %s %s\n", any ? r.method : "(nothing)", r.path, r.body);
     if (live) {
+      cur.settledRequest = sent.request;
       toast("Simulator: not sent", true);
     } else {
       char text[sizeof(cur.toast)];
@@ -267,6 +274,7 @@ static void bambuddy_tick()
   }
   if (sent.settling && millis() - sent.at >= SETTLE_MS) {
     sent.settling = false;
+    cur.settledRequest = sent.request;
     apply(sent.job);
     cur.seq++;
   }
@@ -276,7 +284,7 @@ static void bambuddy_tick()
 
 static std::string env(const char *name) { const char *v = getenv(name); return v ? v : ""; }
 
-// The values go into a shell command, so only what a URL and a number can hold is let through.
+// Live mode accepts a plain HTTP address and a positive printer id.
 static bool safe_url(const std::string &s)
 {
   for (char c : s)
@@ -292,45 +300,37 @@ static bool digits(const std::string &s)
   return true;
 }
 
-// The API key goes to curl in a header file only this user can read, never on the command line.
-static char headerFile[64] = "";
-
-static void remove_header_file()
+static size_t receive_body(char *data, size_t size, size_t count, void *ctx)
 {
-  if (headerFile[0]) unlink(headerFile);
+  auto &body = *static_cast<std::string *>(ctx);
+  const size_t bytes = size * count;
+  if (bytes > 512 * 1024 - body.size()) return 0;
+  body.append(data, bytes);
+  return bytes;
 }
 
-static bool write_header_file()
-{
-  snprintf(headerFile, sizeof(headerFile), "/tmp/bambuddy-sim-XXXXXX");
-  int fd = mkstemp(headerFile); // created 0600
-  if (fd < 0) return false;
-  atexit(remove_header_file);
-  std::string line = "X-API-Key: " + env("BAMBUDDY_KEY") + "\n";
-  bool ok = write(fd, line.data(), line.size()) == (ssize_t)line.size();
-  close(fd);
-  return ok;
-}
-
-// GET through curl; returns the HTTP code and fills `doc` on 200. Same contract as the panel's.
 static int fetch(const char *path, JsonDocument &doc, const JsonDocument &filter, void *)
 {
-  std::string cmd = std::string("curl -s -m 4 -w '\\n%{http_code}' -H @") + headerFile + " '" +
-                    env("BAMBUDDY_URL") + path + "'";
-  FILE *p = popen(cmd.c_str(), "r");
-  if (!p) return -1;
-  std::string out;
-  char buf[4096];
-  size_t n;
-  while ((n = fread(buf, 1, sizeof(buf), p)) > 0) out.append(buf, n);
-  pclose(p);
-
-  size_t nl = out.rfind('\n');
-  if (nl == std::string::npos) return -1;
-  int code = atoi(out.c_str() + nl + 1);
-  out.resize(nl);
-  if (code == 200 && deserializeJson(doc, out, DeserializationOption::Filter(filter))) return ERR_BAD_JSON;
-  return code == 0 ? -1 : code;
+  CURL *curl = curl_easy_init();
+  if (!curl) return ERR_NO_MEMORY;
+  std::string key = "X-API-Key: " + env("BAMBUDDY_KEY");
+  curl_slist *headers = curl_slist_append(nullptr, key.c_str());
+  if (!headers) { curl_easy_cleanup(curl); return ERR_NO_MEMORY; }
+  std::string body, url = env("BAMBUDDY_URL") + path;
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+  curl_easy_setopt(curl, CURLOPT_NOPROXY, "*");
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 4L);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_body);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+  CURLcode result = curl_easy_perform(curl);
+  long code = 0;
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+  curl_easy_cleanup(curl);
+  curl_slist_free_all(headers);
+  if (result != CURLE_OK) return result == CURLE_WRITE_ERROR ? ERR_BAD_JSON : -1;
+  if (code == 200 && deserializeJson(doc, body, DeserializationOption::Filter(filter))) return ERR_BAD_JSON;
+  return static_cast<int>(code);
 }
 
 static Poller poller;
@@ -543,6 +543,8 @@ static std::string slug(const std::string &text)
 
 static int run_shots(const std::string &dir)
 {
+  virtualClock = true;
+  virtualMs = 1000;
   frame.resize(screenW * screenH);
   strip.resize(screenW * (screenH / 10));
   lv_display_t *disp = shotDisplay = lv_display_create(screenW, screenH);
@@ -577,6 +579,10 @@ static int run_shots(const std::string &dir)
   ui_update(cur);
   tap(disp, WRENCH);
   if (!save(dir, "maintenance")) return 1;
+  lv_point_t gear = button("Hold for");
+  press(disp, gear.x, gear.y, 750);
+  if (!save(dir, "settings-hold")) return 1;
+  release(); // a short hold stays on the maintenance screen
   tap(disp, button(LV_SYMBOL_RIGHT));
   if (!save(dir, "maintenance-page-2")) return 1;
   tap(disp, button("Back"));
@@ -835,6 +841,23 @@ static int run_shots(const std::string &dir)
     if (!save(dir, file)) return 1;
   }
 
+  // A finger held through the acknowledgement must still send just one command.
+  cur = scenarios[0].make();
+  cur.seq = nextSeq();
+  ui_update(cur);
+  tap(disp, WRENCH);
+  at = button("Mark done");
+  unsigned before = mockCommands;
+  press(disp, at.x, at.y, 6000);
+  release();
+  if (mockCommands != before + 1) { fprintf(stderr, "Expected one command from a sustained hold\n"); return 1; }
+  at = button("Mark done");
+  press(disp, at.x, at.y, 500);
+  cur.httpCode = -11;
+  cur.seq++;
+  spin(2000);
+  release();
+  if (mockCommands != before + 1) { fprintf(stderr, "Command sent after status became stale\n"); return 1; }
   if (!checks_write(dir + "/checks.txt")) return 1;
   printf("%d problems found by the checks, see %s/checks.txt\n", checks_problems(), dir.c_str());
   return 0;
@@ -1107,7 +1130,7 @@ static int run_demo(const std::string &dir)
   spin(2500);
   demo_tap(icon_button(2, "thumbs up"));
   spin(1200);
-  caption("Plate is clear: hold, and Bambuddy starts the next job.");
+  caption("Hold after removing the print. Bambuddy can then schedule another job.");
   spin(1800);
   demo_hold(button("plate is clear"));
   spin(1000);
@@ -1152,9 +1175,10 @@ static int run_demo(const std::string &dir)
   cur.seq++;
   caption("A problem: the error in words. The LED on the back blinks.");
   spin(3800);
+  caption("After replacing the filament, tap Resume.");
   cur.errorCount = 0;
   cur.seq++;
-  spin(600);
+  spin(1500);
   demo_tap(button("Resume"));
   spin(1200);
 
@@ -1164,7 +1188,7 @@ static int run_demo(const std::string &dir)
   cur.httpCode = -11;
   cur.lostSec = 12;
   cur.seq++;
-  caption("Bambuddy not answering: the panel says so and locks.");
+  caption("Bambuddy is unreachable. Printer controls are disabled.");
   for (int i = 0; i < 3; i++) {
     spin(1000);
     cur.lostSec += 4;
@@ -1206,10 +1230,10 @@ static int run_web(const std::string &dir)
   pages[0].file = "1-first-run";
   pages[1].file = "2-wrong-code";
   pages[1].d.msg = "That code doesn't match the one on the panel's screen.";
-  pages[1].d.kind = "e";
-  pages[2].file = "3-saved-not-accepted";
-  pages[2].d.msg = "Saved, but Bambuddy refused the API key. Fix it and save again, or use the settings as they "
-                   "are if Bambuddy is only down for now.";
+  pages[1].d.locked = true;
+  pages[2].file = "3-server-unreachable";
+  pages[2].d.msg = "Nothing answered at that address. Your previous settings are still saved.";
+  pages[2].d.ticket = 42;
   pages[2].d.kind = "e";
   pages[2].d.typedCode = "abcd-efgh";
   pages[2].d.url = "http://192.168.1.50:3700";
@@ -1344,6 +1368,7 @@ int main(int argc, char **argv)
       return 2;
     }
     char url[256];
+    if (env("BAMBUDDY_URL").size() + 7 >= sizeof(url)) return 2;
     snprintf(url, sizeof(url), "%s", env("BAMBUDDY_URL").c_str());
     normalize_url(url, sizeof(url));
     setenv("BAMBUDDY_URL", url, 1);
@@ -1351,11 +1376,14 @@ int main(int argc, char **argv)
       fprintf(stderr, "BAMBUDDY_URL must be an http:// address and BAMBUDDY_PRINTER a number\n");
       return 2;
     }
-    if (env("BAMBUDDY_KEY").find_first_of("\r\n") != std::string::npos || !write_header_file()) {
+    if (env("BAMBUDDY_KEY").find_first_of("\r\n") != std::string::npos) {
       fprintf(stderr, "can't pass the API key to curl\n");
       return 2;
     }
-    poller.printerId = atoi(env("BAMBUDDY_PRINTER").c_str());
+    errno = 0;
+    long id = strtol(env("BAMBUDDY_PRINTER").c_str(), nullptr, 10);
+    if (errno || id <= 0 || id > INT_MAX) return 2;
+    poller.printerId = (int)id;
   }
 
   if (!web.empty()) return run_web(web);

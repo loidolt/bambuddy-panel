@@ -7,6 +7,7 @@
 bool command_request(const Job &job, int printerId, Request &out)
 {
   out = Request();
+  if (printerId <= 0) return false;
   const int p = printerId;
   switch (job.cmd) {
   case Command::Pause:       snprintf(out.path, sizeof(out.path), "/api/v1/printers/%d/print/pause", p); break;
@@ -25,11 +26,9 @@ bool command_request(const Job &job, int printerId, Request &out)
     out.method = "PATCH";
     snprintf(out.path, sizeof(out.path), "/api/v1/archives/%d", job.arg);
     const char *verdict = job.cmd == Command::VerdictGood ? "good" : "reject";
-    if (job.arg2 > 0)
-      snprintf(out.body, sizeof(out.body), "{\"user_verdict\":\"%s\",\"user_verdict_source\":\"api\",\"run_id\":%d}",
-               verdict, job.arg2);
-    else
-      snprintf(out.body, sizeof(out.body), "{\"user_verdict\":\"%s\",\"user_verdict_source\":\"api\"}", verdict);
+    if (job.arg2 <= 0) return false;
+    snprintf(out.body, sizeof(out.body), "{\"user_verdict\":\"%s\",\"user_verdict_source\":\"api\",\"run_id\":%d}",
+             verdict, job.arg2);
     break;
   }
   case Command::PerformTask:
@@ -73,13 +72,13 @@ static const char *needed_permission(const Job &job)
 static const char *done_label(const Job &job)
 {
   switch (job.cmd) {
-  case Command::Pause:         return "Paused";
-  case Command::Resume:        return "Resumed";
-  case Command::Stop:          return "Stopped";
+  case Command::Pause:         return "Pause requested";
+  case Command::Resume:        return "Resume requested";
+  case Command::Stop:          return "Stop requested";
   case Command::ClearPlate:    return "Plate cleared";
-  case Command::ClearErrors:   return "Errors cleared";
+  case Command::ClearErrors:   return "HMS clear requested";
   case Command::ResumeQueue:   return "Queue resumed";
-  case Command::StartNext:     return "Starting";
+  case Command::StartNext:     return "Start requested";
   case Command::VerdictGood:   return "Marked good";
   case Command::VerdictReject: return "Marked bad";
   case Command::PerformTask:   return "Marked done";
@@ -90,19 +89,27 @@ static const char *done_label(const Job &job)
   return "Done";
 }
 
-bool command_result(const Job &job, int code, char *out, size_t size)
+bool command_result(const Job &job, int code, char *out, size_t size, const CommandReply &reply)
 {
   if (code >= 200 && code < 300) {
-    snprintf(out, size, "%s", done_label(job));
+    const char *message = done_label(job);
+    if (job.cmd == Command::AssignSpool && reply.configurationPending) message = "Assigned; tray setup pending";
+    if (job.cmd == Command::ResumeQueue && reply.noQueueChanges) message = "No held jobs to restore";
+    snprintf(out, size, "%s", message);
     return true;
   }
   if (code == 0) snprintf(out, size, "Nothing to act on");
   else if (code == 401) snprintf(out, size, "Bambuddy refused the API key");
-  else if (code == 403) snprintf(out, size, "API key lacks %s", needed_permission(job));
+  else if (code == 403) snprintf(out, size, "Access denied (%s)", needed_permission(job));
   else if (code == 404) snprintf(out, size, "Bambuddy no longer has it");
-  else if (code == 409 && job.cmd == Command::StartNext) snprintf(out, size, "Not enough filament loaded");
+  else if (code == 409 && job.cmd == Command::StartNext) {
+    const char *why = !strcmp(reply.conflict, "unmatched_filament") ? "No matching filament loaded" :
+                      !strcmp(reply.conflict, "insufficient_filament") ? "Not enough filament loaded" : "Start refused; check Bambuddy";
+    snprintf(out, size, "%s", why);
+  }
   else if (code == 400 || code == 409) snprintf(out, size, "The printer isn't ready for that");
   else if (code >= 500) snprintf(out, size, "Bambuddy had an error (%d)", code);
+  else if (code == ERR_STALE) snprintf(out, size, "Status changed. Check and retry.");
   else if (code == ERR_NO_WIFI) snprintf(out, size, "WiFi is down");
   else if (code < 0) snprintf(out, size, "No answer from Bambuddy");
   else snprintf(out, size, "Bambuddy answered %d", code);
@@ -152,7 +159,7 @@ void normalize_url(char *url, size_t size)
     snprintf(url, size, "%s", tmp);
   }
   // "Http://", as a phone's keyboard starts it: the scheme is matched in lower case.
-  for (char *c = url, *end = strstr(url, "://"); c < end; c++) *c = (char)tolower((unsigned char)*c);
+  for (char *c = url, *end = strstr(url, "://"); end && c < end; c++) *c = (char)tolower((unsigned char)*c);
   for (;;) {
     n = strlen(url);
     if (n > 0 && url[n - 1] == '/') url[n - 1] = 0;

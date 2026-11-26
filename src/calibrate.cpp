@@ -12,14 +12,17 @@
 static const int INSET = SCREEN_H / 12; // crosses sit this far in from each corner
 static const uint32_t GIVE_UP_MS = 60000; // per cross, when nobody touches the screen
 
-static void wait_release()
+static bool wait_release()
 {
-  uint32_t quiet = millis();
+  const uint32_t start = millis();
+  uint32_t quiet = start;
   int x, y;
   while (millis() - quiet < 250) {
+    if (millis() - start >= GIVE_UP_MS) return false;
     if (display_raw_touch(x, y)) quiet = millis();
     delay(10);
   }
+  return true;
 }
 
 // Waits for a steady press and averages it. False when nobody touches in time.
@@ -28,8 +31,8 @@ static bool sample(long &outX, long &outY)
   uint32_t start = millis();
   for (;;) {
     int x, y;
+    if (millis() - start >= GIVE_UP_MS) return false;
     if (!display_raw_touch(x, y)) {
-      if (millis() - start > GIVE_UP_MS) return false;
       delay(10);
       continue;
     }
@@ -49,8 +52,7 @@ static bool sample(long &outX, long &outY)
     if (held && n > 0) {
       outX = sx / n;
       outY = sy / n;
-      wait_release();
-      return true;
+      return wait_release();
     }
     // Let go too soon; wait for the next press.
   }
@@ -67,7 +69,12 @@ bool calibrate_run(bool haveSaved)
       {INSET, SCREEN_H - 1 - INSET},
   };
 
-  wait_release(); // the finger that asked for calibration may still be down
+  if (!wait_release()) {
+    snprintf(buf, sizeof(buf), MSG_CAL_NO_TOUCH, keeping);
+    ui_message(MSG_CAL_TITLE, buf);
+    delay(2500);
+    return false;
+  }
 
   for (int attempt = 0; attempt < 3; attempt++) {
     long rx[4], ry[4];

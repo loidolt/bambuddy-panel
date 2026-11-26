@@ -16,6 +16,7 @@ struct PageChoice {
 };
 
 struct PageData {
+  bool locked = false;
   const char *msg = "";       // shown in a box above the form; HTML, already escaped
   const char *kind = "";      // "" plain, "e" error, "ok" success
   const char *typedCode = ""; // the code as typed, so a failed Save doesn't ask for it again
@@ -24,6 +25,7 @@ struct PageData {
   int printerId = 0;
   const PageChoice *choices = nullptr;
   int choiceCount = 0;
+  int ticket = 0;          // binds offline confirmation to the reviewed draft
   bool finishAnyway = false;  // offers to keep settings Bambuddy didn't accept (it may just be down)
   const char *printerName = ""; // the printer this panel shows, when known: several panels look alike
   bool done = false;          // nothing more to fill in: the message alone

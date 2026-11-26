@@ -24,6 +24,7 @@ if [ "$1" = all ]; then
   render
   render 480x320
   mkdir -p shots/web
+  rm -f shots/web/[0-9]-*.html
   .pio/build/sim/program --web shots/web > /dev/null
   python3 tools/sheet.py shots
 else

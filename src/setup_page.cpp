@@ -28,6 +28,12 @@ void page_escape(PageText &p, const char *text)
 
 void setup_page(PageText &p, const PageData &d)
 {
+  if (d.locked) {
+    p += "<!doctype html><meta name='viewport' content='width=device-width'><title>Bambuddy Panel</title>"
+         "<form action='/'><label>Enter the current code on the panel "
+         "<input name='code' autocomplete='off' required></label> <button>Open settings</button></form>";
+    return;
+  }
   p += ("<!doctype html><html><head><meta charset='utf-8'>"
          "<meta name='viewport' content='width=device-width,initial-scale=1'>"
          "<meta name='color-scheme' content='light dark'><title>Bambuddy Panel");
@@ -79,32 +85,27 @@ void setup_page(PageText &p, const PageData &d)
   p += ("' onchange='chk()'>"
          "<small id='kst'></small><small>Kept only for the address it is saved with: a new address needs "
          "the key again. See <a href='#keyhelp'>how to make one</a>.</small>");
-  if (d.choiceCount) {
-    p += ("<label id='plabel' for='printer'>Printer</label><select id='printer' name='printer' "
-           "style='width:100%;padding:.55em;font-size:1em'>");
-    if (d.printerId <= 0) p += ("<option value=''>Choose...</option>");
-    for (int i = 0; i < d.choiceCount; i++) {
-      p += "<option value='";
-      p += d.choices[i].id;
-      p += d.choices[i].id == d.printerId ? "' selected>" : "'>";
-      page_escape(p, d.choices[i].name);
-      p += " (id ";
-      p += d.choices[i].id;
-      p += ")</option>";
-    }
-    p += ("</select>");
-  } else {
-    p += ("<label id='plabel' for='printer'>Printer id</label><input id='printer' name='printer' inputmode='numeric' value='");
-    if (d.printerId > 0) p += d.printerId;
-    p += ("'><small id='phint'>With the code, address and key filled in, this becomes a list of Bambuddy's printers.</small>");
+  p += "<label for='printer'>Printer id</label><input id='printer' name='printer' type='number' min='1' list='printers' value='";
+  if (d.printerId > 0) p += d.printerId;
+  p += "'><datalist id='printers'>";
+  for (int i = 0; i < d.choiceCount; i++) {
+    p += "<option value='";
+    p += d.choices[i].id;
+    p += "'>";
+    page_escape(p, d.choices[i].name);
+    p += "</option>";
   }
+  p += "</datalist><small>Choose a suggested printer or enter its Bambuddy id.</small>";
   p += ("<button>Save</button></form><hr style='margin-top:2em'>");
   // Away from Save, and worded as the exception it is.
-  if (d.finishAnyway)
+  if (d.finishAnyway) {
     p += ("<form method='post' action='/finish' onsubmit=\"this.code.value=document.getElementById('code').value\">"
-           "<input type='hidden' name='code'><small>Only if the settings are right and Bambuddy is just not "
+           "<input type='hidden' name='ticket' value='");
+    p += d.ticket;
+    p += ("'><input type='hidden' name='code'><small>Only if the settings are right and Bambuddy is just not "
            "running at the moment:</small><button class='s' style='margin-top:.5em'>Use these settings anyway</button>"
            "</form><hr style='margin-top:2em'>");
+  }
   p += ("<form method='post' action='/wifi' "
          "onsubmit=\"this.code.value=document.getElementById('code').value;"
          "return confirm('Forget this WiFi? The panel restarts and opens its WiFi setup network.')\">"
@@ -128,7 +129,7 @@ void setup_page(PageText &p, const PageData &d)
          "queue jobs. Jobs waiting for review need an owner who may start unreviewed jobs.</li>"
          "<li><b>Answering the outcome question</b> works on the owner's own prints, or on anyone's if "
          "the owner may edit all archives.</li></ul>"
-         "<p>Without a permission the panel says which one the key lacks; the rest works.</p>"
+         "<p>An access denial can come from the key scope, printer restriction or the owner’s permissions.</p>"
          "</details>"
          "<details><summary>Limiting the key to this printer</summary>"
          "<p>Bambuddy's settings page can't do this (1.3.x), its API can: "
@@ -145,14 +146,9 @@ void setup_page(PageText &p, const PageData &d)
          "s.textContent='Checking with Bambuddy...';"
          "fetch('/check',{method:'POST',body:new URLSearchParams({code:f.code.value,url:f.url.value,key:f.key.value})})"
          ".then(function(r){return r.json()}).then(function(j){s.textContent=j.msg;s.style.color=j.ok?'#1a7f37':'#b42318';"
-         "if(!j.ok||!j.printers.length)return;var o=document.getElementById('printer'),n=document.createElement('select');"
-         "n.id='printer';n.name='printer';n.style.cssText='width:100%;padding:.55em;font-size:1em';"
-         "var cur=parseInt(o.value)||j.selected;if(j.printers.length>1){var c=document.createElement('option');"
-         "c.value='';c.textContent='Choose...';n.appendChild(c)}"
-         "j.printers.forEach(function(p){var e=document.createElement('option');e.value=p.id;"
-         "e.textContent=p.name+' (id '+p.id+')';if(p.id==cur||j.printers.length==1)e.selected=true;n.appendChild(e)});"
-         "o.replaceWith(n);document.getElementById('plabel').textContent='Printer';"
-         "var h=document.getElementById('phint');if(h)h.remove()})"
+         "var list=document.getElementById('printers');list.replaceChildren();if(!j.ok)return;"
+         "j.printers.forEach(function(p){var e=document.createElement('option');e.value=p.id;e.textContent=p.name;list.appendChild(e)});"
+         "if(!f.printer.value&&j.printers.length===1)f.printer.value=j.printers[0].id})"
          ".catch(function(){s.textContent='The panel didn\\'t answer.';s.style.color='#b42318'})}chk()</script>");
   // The file goes to /update with the code in the address: the panel checks the code before it
   // takes the file, and can't read the form's other fields until the file is through.
@@ -170,9 +166,12 @@ void setup_page(PageText &p, const PageData &d)
     p += ("-app.bin</code> from the <a href='https://github.com/loidolt/bambuddy-panel/releases' target='_blank' "
            "rel='noopener'>releases</a> and choose it here. Not the <code>-full.bin</code>: that one is for "
            "flashing over USB. Settings and touch calibration are kept.</p>"
-           "<form method='post' action='/update' enctype='multipart/form-data' "
-           "onsubmit=\"this.action='/update?code='+encodeURIComponent(document.getElementById('code').value);"
-           "var b=this.querySelector('button');b.disabled=true;b.textContent='Updating, about a minute...'\">"
+           "<form method='post' action='/update' "
+           "onsubmit=\"var f=this,b=f.querySelector('button');b.disabled=true;b.textContent='Updating...';"
+           "fetch('/update?code='+encodeURIComponent(document.getElementById('code').value),"
+           "{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f.fw.files[0]})"
+           ".then(r=>r.text()).then(html=>{document.open();document.write(html);document.close()})"
+           ".catch(()=>{b.disabled=false;b.textContent='Retry upload'});return false\">"
            "<label for='fw'>Firmware file</label><input id='fw' name='fw' type='file' accept='.bin' required>"
            "<small>Needs the code at the top of this page. Don't unplug the panel while it updates; "
            "it restarts when it is done.</small>"

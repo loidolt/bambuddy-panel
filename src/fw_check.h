@@ -8,7 +8,7 @@
 #include <cstdint>
 
 // Every firmware image carries this, followed by the name of its build and a ';', e.g.
-// "bambuddy-panel-board:cyd-st7789;". The build's name is PlatformIO's env name (BOARD_ENV).
+// "bambuddy-panel-board:cyd-st7789;". BOARD_ENV names the physical profile even in custom environments.
 #define FW_BOARD_MARKER "bambuddy-panel-board:"
 
 enum class FwVerdict {

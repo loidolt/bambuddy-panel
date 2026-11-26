@@ -1,6 +1,9 @@
 name: Board report
 description: You flashed a board whose profile was untested, or want a new board supported
 body:
+  - type: markdown
+    attributes:
+      value: Redact setup QR codes, API keys, passwords, private addresses, printer identifiers and job names from photos and logs.
   - type: input
     id: board
     attributes:

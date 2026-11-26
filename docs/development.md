@@ -30,8 +30,8 @@ own is version `dev`.
 
 The panel's screens, its JSON reading, its requests and its polling round run on the desktop in
 a window the size of the panel's screen (320x240, shown at 2x), so screens can be worked on
-without flashing a board. Needs SDL2
-(macOS: `brew install sdl2`; Debian/Ubuntu: `apt install libsdl2-dev`).
+without flashing a board. Needs SDL2 and libcurl
+(macOS: `brew install sdl2`; Debian/Ubuntu: `apt install libsdl2-dev libcurl4-openssl-dev`).
 
 ```bash
 pio run -e sim -t exec
@@ -130,7 +130,7 @@ mkdocs serve
 ```
 
 CI builds the site with `--strict`, so a link to a page or heading that isn't there fails, and
-publishes it when `main` changes.
+publishes from public `main` when GitHub Pages is configured for Actions.
 
 ## Pushed updates over WiFi
 
@@ -149,8 +149,10 @@ upload_flags = --auth=change-me-please
 ```
 
 ```bash
-pio run -e my-panel -t upload
+pio run -e my-panel
 ```
+
+Install the resulting `.pio/build/my-panel/firmware.bin` once through the existing panel’s settings page. It inherits the physical board identity from `cyd-st7789`. After reboot, set `upload_port` to the panel’s address or the hostname for its configured printer id. Subsequent `pio run -e my-panel -t upload` commands use ArduinoOTA.
 
 The password is checked with a challenge, so it doesn't cross the network, but the firmware
 itself is neither encrypted nor signed, and the password is in the firmware file.

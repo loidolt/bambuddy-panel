@@ -17,7 +17,7 @@ while nothing wants anyone. The first touch only brightens it.
 ## The touch lands in the wrong place
 
 On a panel with resistive touch, calibrate it again: open the maintenance screen (the wrench),
-hold the **gear**, and choose **Calibrate touch**.
+press **Hold for settings** until the bar fills, and choose **Calibrate touch**.
 
 If the touch is too far off to press anything, touch the screen while it says "Starting", just
 after power-on, and keep holding for about four seconds: the panel goes to touch calibration.
@@ -31,11 +31,11 @@ is a flag in the board's file: see [Boards](boards.md#if-the-picture-or-the-touc
 **No WiFi at start-up.** A panel that is set up says so and keeps trying; it does not
 open its setup network by itself.
 
-**To move it to another WiFi**, open the settings page (the wrench, then hold the **gear**) and
+**To move it to another WiFi**, open the settings page (the wrench, then **Hold for settings**) and
 use **Change WiFi**. If the saved WiFi can't be joined once the settings were asked for, the
 setup network `BambuddyPanel-Setup` opens instead.
 
-**The setup network is gone.** It closes after 10 minutes without use. Restart the panel.
+**The setup network is gone.** It has a ten-minute timeout. Restart the panel.
 
 ## Bambuddy
 
@@ -43,14 +43,13 @@ setup network `BambuddyPanel-Setup` opens instead.
 seconds old.
 
 **A red band says there has been no answer for some time.** Bambuddy hasn't answered twice or
-more in a row. The last status stays under the band and nothing can be pressed until it
-answers again.
+more in a row. The last status stays under the band and printer controls wait for a fresh status.
 
 **A screen says why and offers "Open settings".** Bambuddy has refused the API key, the address
 can't work, or there has been no answer for five minutes. Check that Bambuddy runs, that the
 URL starts with `http://` (https isn't supported), and that the key still exists.
 
-**A red band after pressing a button**, such as "API key lacks Manage Queue": Bambuddy refused
+**A red band after pressing a button**, such as "Access denied (Manage Queue)": Bambuddy refused
 the command and the band says why. The permissions each button needs, and what the key's owner
 must be allowed to do, are under [Get started](get-started.md#set-up-a-panel).
 
@@ -79,7 +78,7 @@ A `-full.bin`, a file for another board, or anything else is refused, and the pa
 running what it had. The settings page names the build the panel runs.
 
 **A new firmware starts but doesn't work.** The panel doesn't go back to the old one by
-itself. Write a working `-app.bin` over USB: see [Updating](updating.md).
+itself. Recover with the matching `-full.bin` over USB. This clears settings and calibration: see [Updating](updating.md).
 
 ## Reporting a problem
 
@@ -89,4 +88,4 @@ panel's settings page.
 
 If you can, add the serial log: `pio device monitor` shows the version at start-up (`[boot]
 ...`) and, once a minute, the version, the free memory and the background task's spare stack
-(`[health] ...`). Don't paste your API key.
+(`[health] ...`). Redact setup QR codes, passwords, API keys, server addresses and identifying printer or job names from logs and photos.

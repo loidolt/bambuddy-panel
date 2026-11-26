@@ -95,13 +95,15 @@ static void build()
     ui_button_set(b, text, Kind::Quiet, false);
   };
   head(btnBack, 8, 72, LV_SYMBOL_LEFT " Back", back_fire);
-  head(btnGear, 86, TARGET, LV_SYMBOL_SETTINGS, gear_fire);
-  ui_button_set(btnGear, LV_SYMBOL_SETTINGS, Kind::Quiet, true); // it restarts the panel: a hold
+  const int gearX = 86, gearWidth = 92;
+  head(btnGear, gearX, gearWidth, "", gear_fire);
+  ui_button_set(btnGear, LV_SYMBOL_SETTINGS " Hold for\nsettings", Kind::Quiet, true);
   head(btnPrev, W - 8 - TARGET - 36 - TARGET, TARGET, LV_SYMBOL_LEFT, page_fire, -1);
   head(btnNext, W - 8 - TARGET, TARGET, LV_SYMBOL_RIGHT, page_fire, 1);
   lblPage = ui_label(maintBox, ui.small, C_DIM, W - 8 - TARGET - 36, ROW_GAP + 15, 36);
   lv_obj_set_style_text_align(lblPage, LV_TEXT_ALIGN_CENTER, 0);
-  lblTitle = ui_label(maintBox, ui.small, C_TEXT, 140, ROW_GAP + 15, W - 150);
+  const int titleX = gearX + gearWidth + 8;
+  lblTitle = ui_label(maintBox, ui.small, C_TEXT, titleX, ROW_GAP + 15, W - titleX - 8);
 
   for (int row = 0; row < TASK_ROWS; row++) {
     lv_obj_t *r = taskRow[row] = ui_plain(maintBox);
@@ -121,6 +123,13 @@ static void build()
   }
   lblNoTasks = ui_label(maintBox, ui.small, C_DIM, 10, (ui.uh - 240) / 2 + 120, W - 20);
   lv_obj_set_style_text_align(lblNoTasks, LV_TEXT_ALIGN_CENTER, 0);
+
+  // Grow the settings hold indicator across the bottom edge, clear of the finger on the gear.
+  lv_obj_set_parent(btnGear.fill, maintBox);
+  lv_obj_set_height(btnGear.fill, px(7));
+  lv_obj_set_style_radius(btnGear.fill, 0, 0);
+  lv_obj_set_style_bg_color(btnGear.fill, lv_color_hex(C_OK_TEXT), 0);
+  lv_obj_align(btnGear.fill, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 }
 
 bool tasks_showing() { return showing; }
@@ -164,7 +173,7 @@ static void draw_rows()
     // The answer shows here, in the row that was pressed, until the list has been read again.
     const char *words = !under_way ? "Mark done" : ui_answered() ? LV_SYMBOL_OK " Done" : "Saving...";
     ui_button_set(btnDone[row], words, t.level > 0 ? Kind::Go : Kind::Quiet, true, Icon::None, t.id);
-    ui_button_enable(btnDone[row], !ui_busy());
+    ui_button_enable(btnDone[row], ui_can_write());
   }
 }
 
@@ -201,10 +210,7 @@ void tasks_draw(const Snapshot &s)
 // Amber, not red: red is for errors and for Stop.
 void tasks_draw_badge(const Snapshot &s)
 {
-  if (!s.tasksKnown) {
-    lv_obj_add_flag(btnWrench.btn, LV_OBJ_FLAG_HIDDEN);
-    return;
-  }
+  // The wrench also opens local settings when maintenance is unavailable.
   lv_obj_remove_flag(btnWrench.btn, LV_OBJ_FLAG_HIDDEN);
   int n = s.tasksDue + s.tasksWarn;
   char buf[12] = "";

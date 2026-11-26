@@ -96,7 +96,7 @@ void status_filter(JsonDocument &filter)
 {
   for (const char *k : {"name", "connected", "state", "current_print", "subtask_name", "progress",
                         "remaining_time", "layer_num", "total_layers", "awaiting_plate_clear",
-                        "stg_cur_name"})
+                        "stg_cur_name", "current_archive_id"})
     filter[k] = true;
   filter["temperatures"]["nozzle"] = true;
   filter["temperatures"]["bed"] = true;
@@ -104,7 +104,7 @@ void status_filter(JsonDocument &filter)
   for (const char *k : {"description", "full_code", "severity", "actions"}) filter["hms_errors"][0][k] = true;
   // The slots a spool can sit in: the trays of each AMS and the external holders.
   filter["ams"][0]["id"] = true;
-  for (const char *k : {"id", "tray_type", "tray_color"}) {
+  for (const char *k : {"id", "tray_type", "tray_color", "exists"}) {
     filter["ams"][0]["tray"][0][k] = true;
     filter["vt_tray"][0][k] = true;
   }
@@ -127,6 +127,13 @@ static bool hms_counts(JsonObjectConst e)
 
 static void parse_slots(JsonDocument &doc, Snapshot &s); // below
 
+// Keep the identity of full server fields even where the display text is shortened.
+static uint32_t field_hash(const char *text, uint32_t hash = 2166136261u)
+{
+  for (const char *c = text ? text : ""; *c; ++c) hash = (hash ^ (uint8_t)*c) * 16777619u;
+  return hash;
+}
+
 void parse_status(JsonDocument &doc, Snapshot &s)
 {
   s.connected = doc["connected"] | false;
@@ -134,6 +141,8 @@ void parse_status(JsonDocument &doc, Snapshot &s)
   copy_ascii(s.state, sizeof(s.state), doc["state"]);
   const char *job = doc["subtask_name"];
   if (!job || !*job) job = doc["current_print"];
+  s.currentArchive = doc["current_archive_id"] | 0;
+  s.fileIdentity = field_hash(job);
   copy_name(s.job, sizeof(s.job), job);
   copy_ascii(s.stage, sizeof(s.stage), doc["stg_cur_name"]);
   s.progress = number(doc["progress"], 0, 0, 100);
@@ -146,10 +155,12 @@ void parse_status(JsonDocument &doc, Snapshot &s)
   s.awaitingPlateClear = doc["awaiting_plate_clear"] | false;
   parse_slots(doc, s);
 
+  s.errorIdentity = 2166136261u;
   s.errorCount = 0;
   for (auto &e : s.errors) e[0] = 0;
   for (JsonObjectConst e : doc["hms_errors"].as<JsonArrayConst>()) {
     if (!hms_counts(e)) continue;
+    s.errorIdentity = field_hash(e["full_code"] | "", field_hash(e["description"] | "", s.errorIdentity));
     int at = s.errorCount++;
     if (at >= MAX_ERRORS) continue; // counted, but only the first few can be read on the screen
     const char *text = e["description"];
@@ -169,6 +180,7 @@ static void parse_slots(JsonDocument &doc, Snapshot &s)
     slot.ams = (uint8_t)ams;
     slot.tray = (uint8_t)tray;
     copy_ascii(slot.type, sizeof(slot.type), t["tray_type"] | "");
+    slot.empty = t["exists"].is<bool>() && !t["exists"].as<bool>();
     slot.rgb = parse_rgb(t["tray_color"]);
   };
   for (JsonObjectConst unit : doc["ams"].as<JsonArrayConst>()) {
@@ -178,7 +190,7 @@ static void parse_slots(JsonDocument &doc, Snapshot &s)
   // The external holders come as trays 254 and 255; Bambuddy's assignments call them slot 0
   // and 1 of unit 255.
   for (JsonObjectConst t : doc["vt_tray"].as<JsonArrayConst>()) {
-    int id = t["id"] | 254;
+    int id = t["id"] | -1;
     if (id == 254 || id == 255) add(EXTERNAL_AMS, id - 254, t);
   }
 }
@@ -195,7 +207,8 @@ void parse_assignments(JsonDocument &doc, int printerId, Snapshot &s)
   s.assignedKnown = true;
   s.assignedCount = 0;
   for (JsonObjectConst a : doc.as<JsonArrayConst>()) {
-    if ((a["printer_id"] | printerId) != printerId || s.assignedCount >= MAX_SLOTS) continue;
+    if ((a["printer_id"] | 0) != printerId) continue;
+    if (s.assignedCount >= MAX_SLOTS) { s.assignedKnown = false; break; }
     int ams = a["ams_id"] | -1, tray = a["tray_id"] | -1;
     if (ams < 0 || ams > 255 || tray < 0 || tray > 15) continue;
     Assignment &as = s.assigned[s.assignedCount++];
@@ -207,7 +220,7 @@ void parse_assignments(JsonDocument &doc, int printerId, Snapshot &s)
     spool_name(as.name, sizeof(as.name), sp["brand"], sp["subtype"], sp["color_name"]);
     if (sp["label_weight"].is<float>() && sp["weight_used"].is<float>()) {
       float left = sp["label_weight"].as<float>() - sp["weight_used"].as<float>();
-      as.remainG = left < 0 ? 0 : (int)(left + 0.5f);
+      as.remainG = bounded_grams(left);
     }
   }
 }
@@ -231,6 +244,8 @@ static const char *item_name(JsonObjectConst item)
 void parse_queue(JsonDocument &doc, int printerId, Snapshot &s)
 {
   s.queued = 0;
+  s.queueKnown = doc.is<JsonArrayConst>();
+  s.heldIdentity = 2166136261u;
   s.held = 0;
   s.nextId = 0;
   s.nextName[0] = s.nextWhy[0] = s.nextBy[0] = s.jobBy[0] = s.runningName[0] = 0;
@@ -246,10 +261,14 @@ void parse_queue(JsonDocument &doc, int printerId, Snapshot &s)
   int pos[KEEP], kept = 0;
 
   for (JsonObjectConst item : doc.as<JsonArrayConst>()) {
-    const char *status = item["status"] | "pending";
+    if (!item["printer_id"].isNull() && (item["printer_id"] | 0) != printerId) continue;
+    const char *status = item["status"] | "";
     if (strcmp(status, "skipped") == 0) {
       const char *why = item["error_message"] | "";
-      if (strcmp(why, QUEUE_GATE_MESSAGE) == 0) s.held++;
+      if ((item["printer_id"] | 0) == printerId && strcmp(why, QUEUE_GATE_MESSAGE) == 0) {
+        ++s.held;
+        s.heldIdentity = (s.heldIdentity ^ (item["id"] | 0u)) * 16777619u;
+      }
       continue;
     }
     if (strcmp(status, "printing") == 0) {
@@ -303,6 +322,7 @@ void last_print_filter(JsonDocument &filter)
 
 void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s)
 {
+  s.lastPrintKnown = doc.is<JsonArrayConst>();
   s.verdictPending = false;
   s.archiveId = 0;
   s.runId = 0;
@@ -313,14 +333,14 @@ void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s)
     // As Bambuddy's own printer card: a finished print that asked, and nobody has answered yet
     // (here, in Bambuddy, or from a notification). Failed and cancelled prints are not asked.
     const char *status = a["status"] | "";
-    s.verdictPending = strcmp(status, "completed") == 0 && (a["confirm_requested"] | false) &&
+    s.verdictPending = s.archiveId > 0 && s.runId > 0 && strcmp(status, "completed") == 0 && (a["confirm_requested"] | false) &&
                        a["user_verdict"].isNull();
   }
 }
 
 void tasks_filter(JsonDocument &filter)
 {
-  for (const char *k : {"id", "maintenance_type_name", "enabled", "interval_type", "hours_until_due",
+  for (const char *k : {"last_performed_at", "id", "maintenance_type_name", "enabled", "interval_type", "hours_until_due",
                         "days_until_due", "is_due", "is_warning"})
     filter["maintenance_items"][0][k] = true;
 }
@@ -350,6 +370,7 @@ void parse_tasks(JsonDocument &doc, Snapshot &s)
 
     Task t;
     t.id = item["id"] | 0;
+    t.lastPerformed = field_hash(item["last_performed_at"] | "");
     copy_ascii(t.name, sizeof(t.name), item["maintenance_type_name"]);
     t.days = strcmp(item["interval_type"] | "hours", "days") == 0;
     JsonVariantConst left = item[t.days ? "days_until_due" : "hours_until_due"];
@@ -376,6 +397,7 @@ void parse_settings(JsonDocument &doc, Snapshot &s)
 {
   // Bambuddy's default is off; the setting may come as a bool or as the string "true".
   JsonVariant v = doc["require_plate_clear"];
+  s.settingsKnown = v.is<bool>() || (v.is<const char *>() && (!strcmp(v.as<const char *>(), "true") || !strcmp(v.as<const char *>(), "false")));
   if (v.is<bool>()) s.requirePlateClear = v.as<bool>();
   else if (v.is<const char *>()) s.requirePlateClear = strcmp(v.as<const char *>(), "true") == 0;
   else s.requirePlateClear = false;

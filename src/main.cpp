@@ -194,7 +194,7 @@ void setup()
 
   start_ota();
   ui_message(MSG_CONNECTING_TITLE, MSG_CONNECTING_BAMBUDDY, true);
-  bambuddy_begin();
+  if (!bambuddy_begin()) ui_message("Out of memory", "Restart the panel to reconnect.");
 }
 
 void loop()

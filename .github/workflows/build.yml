@@ -29,7 +29,7 @@ jobs:
         run: |
           pip install platformio==6.2.0
           sudo apt-get update
-          sudo apt-get install -y libsdl2-dev
+          sudo apt-get install -y libsdl2-dev libcurl4-openssl-dev
 
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -46,32 +46,24 @@ jobs:
           python3 tools/make_icons.py
           git diff --exit-code src/icons.c
 
-      # Every [env:...] in boards/*.ini. With no names `pio run` would build the default board
-      # alone and pass, so an empty list, or one shorter than the list in docs/boards.md, fails here.
-      - name: Firmware, every board
-        run: |
-          envs=$(grep -ho '^\[env:[^]]*' boards/*.ini | sed 's/^\[env://')
-          count=$(echo "$envs" | grep -c .)
-          echo "$count boards: $(echo $envs)"
-          test "$count" -ge 10
-          for e in $envs; do grep -q "\`$e\`" docs/boards.md || { echo "$e is not in docs/boards.md"; exit 1; }; done
-          pio run $(echo "$envs" | sed 's/^/-e /')
+      - name: Build and verify the firmware packages for every board
+        run: python3 tools/package_firmware.py --build
 
-      # The marker is the OTA host name, which is only compiled in with OTA_PASSWORD: it shows
-      # that the flag reached the compiler, and below that it is gone again.
-      - name: Firmware with updates over WiFi turned on
-        env:
-          PLATFORMIO_BUILD_FLAGS: -DOTA_PASSWORD=\"ci-only-password\"
+      - name: Rebuild the source archive with a custom OTA profile
         run: |
-          pio run -e cyd-st7789 -t clean && pio run -e cyd-st7789
-          grep -a -q 'bambuddy-panel-%d' .pio/build/cyd-st7789/firmware.bin
+          work=$(mktemp -d)
+          tar -xzf dist/bambuddy-panel-dev-source.tar.gz -C "$work"
+          cat >> "$work/platformio_override.ini" <<'EOF'
 
-      - name: Firmware without OTA again, for the artifact
-        run: |
-          pio run -e cyd-st7789 -t clean && pio run -e cyd-st7789
-          if grep -a -l -e 'bambuddy-panel-%d' -e 'ci-only-password' .pio/build/*/firmware.bin; then
-            echo "an OTA build is left among the firmware files"; exit 1
-          fi
+          [env:custom-panel]
+          extends = env:cyd-st7789
+          build_flags = ${env:cyd-st7789.build_flags} -DOTA_PASSWORD=\"ci-only-password\"
+          EOF
+          cp -a --reflink=auto "$HOME/.platformio" "$work/pio-core"
+          PLATFORMIO_CORE_DIR="$work/pio-core" pio run --project-dir "$work" -e custom-panel
+          image="$work/.pio/build/custom-panel/firmware.bin"
+          grep -aFq 'bambuddy-panel-%d' "$image"
+          grep -aFq 'bambuddy-panel-board:cyd-st7789;' "$image"
 
       - name: Simulator screenshots
         run: ./tools/shots.sh
@@ -96,19 +88,10 @@ jobs:
             python3 tools/compare_shots.py docs/screenshots/$size shots/$size docs/boards.md
           done
 
-      # The license texts that go with the firmware files (see THIRD_PARTY.md).
-      - name: License notices
-        run: python3 tools/collect_notices.py notices
-
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: firmware
-          # With the bootloader and partition table: what a board needs besides the firmware.
-          path: |
-            .pio/build/*/firmware.bin
-            .pio/build/*/bootloader.bin
-            .pio/build/*/partitions.bin
-            notices/*
+          path: dist/
           if-no-files-found: error
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

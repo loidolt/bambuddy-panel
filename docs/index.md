@@ -27,8 +27,7 @@ while standing there. No phone, no browser tab.
 </div>
 
 One panel per printer. It runs on the inexpensive ESP32-2432S028R ("Cheap Yellow Display") and
-talks only to your Bambuddy server over WiFi, never to the printer or to any cloud, so it works
-with every printer Bambuddy supports.
+talks only to your Bambuddy server over WiFi, never to the printer or to any cloud. Available status fields and controls depend on the printer and Bambuddy version.
 
 *The film is a minute with the panel, from the simulator: the panel's own screens, a made-up
 printer. The dot is a finger, the lamp under the screen is the LED on the board's back.*
@@ -38,7 +37,7 @@ printer. The dot is a finger, the lamp under the screen is the LED on the board'
     It runs on one board, the ESP32-2432S028R with the ST7789 display (`cyd-st7789`): display,
     touch calibration, WiFi and Bambuddy setup, status, and the filament slots of a real
     printer. The buttons' commands (pause, stop, plate is clear, start and the rest) are
-    unit-tested against Bambuddy's API as documented, but **have not all been pressed against a
+    checked by native request tests, but **have not all been pressed against a
     real Bambuddy yet**, and no other board has been flashed. Expect rough edges until this
     note goes away.
 
@@ -101,7 +100,7 @@ left to the printer.
 *Screenshots are from the simulator, at the panel's real 320x240.*
 
 - Pause, resume and stop a print.
-- **Plate is clear**, so Bambuddy starts the next job in the queue.
+- **Plate is clear** releases the plate gate. Bambuddy decides when a queued job can start.
 - Bambuddy's *Ask for outcome* question, with a thumbs up or down.
 - Start a job that waits for a manual start; resume a queue held after a failed print.
 - The printer's error in words, and clearing it.
@@ -109,7 +108,7 @@ left to the printer.
 - Maintenance tasks, most urgent first, and marking them done.
 - An LED that blinks when someone should come over.
 
-Anything that starts a print or can't be undone needs a 1.5 second hold.
+Start, Stop, Resume queue and Plate is clear take a 1.5-second hold. Pause and Resume take one tap.
 
 ## Not done yet
 

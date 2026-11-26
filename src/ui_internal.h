@@ -65,19 +65,21 @@ struct UiButton {
   Kind kind = Kind::Quiet;
   // What the button stood for when the finger came down, and what it stands for now. They
   // differ when the screen changed under a finger that stayed: then nothing is done.
-  int id = 0, idAtPress = -1;
+  uint64_t id = 0, idAtPress = UINT64_MAX;
   uint32_t downAt = 0;
   bool fired = false, swallowed = false;
 };
 void ui_button_create(UiButton &b, lv_obj_t *parent, void (*fire)(UiButton &), int tag = 0);
 // What it says and does. `id` tells one action from another (see UiButton::id).
-void ui_button_set(UiButton &b, const char *text, Kind kind, bool hold, Icon icon = Icon::None, int id = 0);
+void ui_button_set(UiButton &b, const char *text, Kind kind, bool hold, Icon icon = Icon::None, uint64_t id = 0);
 // A button that can't be pressed right now is grey and takes no touch.
 void ui_button_enable(UiButton &b, bool on);
 
 // Sends a command and remembers it as under way until Bambuddy has answered and been read
 // again; meanwhile ui_busy() is true and nothing else is sent.
 void ui_send(Command c, int arg = 0, int arg2 = 0);
+void ui_notice(const char *text, bool bad);
+bool ui_can_write();
 bool ui_busy();
 bool ui_pending(Command c, int arg); // this very command is the one under way
 bool ui_answered();                  // Bambuddy has said yes to it; its effect hasn't been read yet

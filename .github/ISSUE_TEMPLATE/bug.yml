@@ -3,6 +3,9 @@ description: The panel shows or does something wrong
 body:
   - type: markdown
     attributes:
+      value: Redact setup QR codes, API keys, passwords, private addresses, printer identifiers and job names from photos and logs.
+  - type: markdown
+    attributes:
       value: |
         Don't paste your API key, and blank out anything in a log you'd rather not share.
   - type: input

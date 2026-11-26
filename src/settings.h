@@ -14,7 +14,7 @@ struct Settings {
 extern Settings settings;
 
 void settings_load();
-void settings_save();
+bool settings_save(const Settings &candidate);
 
 // "Open settings" on the running panel: remembered across the restart that gets it there.
 void settings_request_setup();

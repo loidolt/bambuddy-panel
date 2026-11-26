@@ -97,7 +97,10 @@ static void row_fire(UiButton &b)
     page = 0;
     materialChosen = false;
     drawnState = SpoolState::None;
-    bambuddy_send(Command::LoadSpools); // a fresh list every time the picker opens
+    if (!bambuddy_send(Command::LoadSpools)) {
+      mode = Mode::Slots;
+      ui_notice("Busy, try again", true);
+    } // a fresh list every time the picker opens
     touched();
     return;
   }
@@ -238,14 +241,14 @@ static void draw_slots(const Snapshot &s)
     format_slot(name, sizeof(name), slot);
     left[0] = 0;
     if (a) format_remaining(left, sizeof(left), a->remainG);
-    snprintf(buf, sizeof(buf), left[0] ? "%s   %s   %s" : "%s   %s", name, slot.type[0] ? slot.type : "empty", left);
+    snprintf(buf, sizeof(buf), left[0] ? "%s   %s   %s" : "%s   %s", name, slot.empty ? "Empty" : slot.type[0] ? slot.type : "Unknown", left);
     ui_set_text(lblLine1[i], buf);
     set_swatch(i, slot.type[0] != 0, slot.rgb);
     snprintf(buf, sizeof(buf), "%s", a ? a->name : s.assignedKnown ? "No spool assigned" : "");
     ui_set_text(lblLine2[i], buf);
     lv_obj_set_style_text_color(lblLine2[i], lv_color_hex(a ? C_TEXT : C_DIM), 0);
     ui_button_set(btnRow[i], a ? "Change" : "Assign", Kind::Quiet, false, Icon::None, slot_code(slot.ams, slot.tray) + 1);
-    ui_button_enable(btnRow[i], !ui_busy());
+    ui_button_enable(btnRow[i], ui_can_write() && s.assignedKnown);
   }
   lv_label_set_text(lblNote, slotCount ? "" : "This printer reports no filament slots.");
 }
@@ -298,7 +301,7 @@ static void draw_spools()
       ui_set_text(lblLine2[i], "in this slot now");
       bool under_way = ui_pending(Command::UnassignSpool, 0);
       ui_button_set(btnRow[i], under_way ? "Saving..." : "Remove", Kind::Quiet, true, Icon::None, 1);
-      ui_button_enable(btnRow[i], !ui_busy());
+      ui_button_enable(btnRow[i], ui_can_write());
       continue;
     }
     if (used >= got) {
@@ -316,8 +319,8 @@ static void draw_spools()
     bool under_way = ui_pending(Command::AssignSpool, sp.id);
     // Putting a spool in a slot changes Bambuddy's records and the printer's slot: a hold.
     ui_button_set(btnRow[i], here ? "In slot" : under_way ? "Saving..." : "Assign", here ? Kind::Quiet : Kind::Go,
-                  true, Icon::None, sp.id + 2);
-    ui_button_enable(btnRow[i], !here && !ui_busy());
+                  true, Icon::None, uint64_t(sp.id) + 2);
+    ui_button_enable(btnRow[i], !here && ui_can_write());
   }
 }
 

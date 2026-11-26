@@ -38,6 +38,9 @@ bool preparing(const Snapshot &s);
 // Clearing the plate will start the next job without anyone asking again.
 bool next_starts_by_itself(const Snapshot &s);
 
+// An empty target means the last reads do not authorize this action.
+CommandTarget command_target(const Job &job, const Snapshot &s);
+
 // Colours by what they mean; ui.cpp has the values.
 enum class Tone : uint8_t { Plain, Dim, Go, Neutral, Caution, Danger, Quiet };
 

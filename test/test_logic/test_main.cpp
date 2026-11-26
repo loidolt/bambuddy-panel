@@ -11,6 +11,7 @@
 
 #include "bambuddy_api.h"
 #include "bambuddy_parse.h"
+#include "response_json.h"
 #include "fw_check.h"
 #include "poller.h"
 #include "setup_page.h"
@@ -302,7 +303,7 @@ static void test_verdict_not_asked_for_failed_or_running_prints()
 static void test_plate_clear_setting()
 {
   Snapshot s;
-  TEST_ASSERT_TRUE(s.requirePlateClear); // assumed on until read
+  TEST_ASSERT_FALSE(s.requirePlateClear); // first read has not completed
   read(R"({"require_plate_clear": false, "currency": "EUR"})", settings_filter, [&](JsonDocument &d) { parse_settings(d, s); });
   TEST_ASSERT_FALSE(s.requirePlateClear);
   read(R"({"require_plate_clear": true})", settings_filter, [&](JsonDocument &d) { parse_settings(d, s); });
@@ -413,14 +414,15 @@ static void test_requests_match_bambuddy_api()
   expect_request({Command::StartNext, 42, 0}, "POST", "/api/v1/queue/42/start", "");
   expect_request({Command::VerdictGood, 15, 26}, "PATCH", "/api/v1/archives/15",
                  R"({"user_verdict":"good","user_verdict_source":"api","run_id":26})");
-  expect_request({Command::VerdictReject, 15, 0}, "PATCH", "/api/v1/archives/15",
-                 R"({"user_verdict":"reject","user_verdict_source":"api"})");
+  expect_request({Command::VerdictReject, 15, 26}, "PATCH", "/api/v1/archives/15",
+                 R"({"user_verdict":"reject","user_verdict_source":"api","run_id":26})");
   expect_request({Command::PerformTask, 7, 0}, "POST", "/api/v1/maintenance/items/7/perform", "{}");
 }
 
 static void test_requests_need_an_id()
 {
   Request r;
+  TEST_ASSERT_FALSE(command_request({Command::VerdictReject, 15, 0}, 3, r));
   TEST_ASSERT_FALSE(command_request({Command::StartNext, 0, 0}, 3, r));
   TEST_ASSERT_FALSE(command_request({Command::VerdictGood, 0, 26}, 3, r));
   TEST_ASSERT_FALSE(command_request({Command::PerformTask, 0, 0}, 3, r));
@@ -430,9 +432,9 @@ static void test_command_results_are_plain()
 {
   char out[40];
   TEST_ASSERT_TRUE(command_result({Command::StartNext, 42, 0}, 200, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_STRING("Starting", out);
+  TEST_ASSERT_EQUAL_STRING("Start requested", out);
   TEST_ASSERT_FALSE(command_result({Command::StartNext, 42, 0}, 409, out, sizeof(out)));
-  TEST_ASSERT_EQUAL_STRING("Not enough filament loaded", out);
+  TEST_ASSERT_EQUAL_STRING("Start refused; check Bambuddy", out);
   command_result({Command::Pause, 0, 0}, 409, out, sizeof(out));
   TEST_ASSERT_EQUAL_STRING("The printer isn't ready for that", out); // no bare status codes
   TEST_ASSERT_FALSE(command_result({Command::Pause, 0, 0}, ERR_NO_WIFI, out, sizeof(out)));
@@ -450,10 +452,10 @@ static void test_refused_command_names_the_permission()
     Command cmd;
     const char *text;
   } cases[] = {
-      {Command::Pause, "API key lacks Control Printer"},      {Command::Stop, "API key lacks Control Printer"},
-      {Command::ClearPlate, "API key lacks Control Printer"}, {Command::ClearErrors, "API key lacks Control Printer"},
-      {Command::StartNext, "API key lacks Manage Queue"},     {Command::ResumeQueue, "API key lacks Manage Queue"},
-      {Command::VerdictGood, "API key lacks Manage Archives"}, {Command::PerformTask, "API key lacks Manage Maintenance"},
+      {Command::Pause, "Access denied (Control Printer)"},      {Command::Stop, "Access denied (Control Printer)"},
+      {Command::ClearPlate, "Access denied (Control Printer)"}, {Command::ClearErrors, "Access denied (Control Printer)"},
+      {Command::StartNext, "Access denied (Manage Queue)"},     {Command::ResumeQueue, "Access denied (Manage Queue)"},
+      {Command::VerdictGood, "Access denied (Manage Archives)"}, {Command::PerformTask, "Access denied (Manage Maintenance)"},
   };
   for (const auto &c : cases) {
     command_result({c.cmd, 1, 0}, 403, out, sizeof(out));
@@ -629,7 +631,7 @@ static int count_asked(const FakeBambuddy &b, const char *part)
 }
 
 // Status answers but another request doesn't: the screen keeps what it last knew.
-static void test_failed_side_requests_keep_the_last_known()
+static void test_failed_side_requests_clear_action_targets()
 {
   FakeBambuddy b;
   b.queue = R"([{"id": 9, "position": 1, "status": "pending", "printer_id": 1, "manual_start": true,
@@ -646,9 +648,9 @@ static void test_failed_side_requests_keep_the_last_known()
   now = 4000;
   poll_once(p, s, fake_fetch, &b);
   TEST_ASSERT_TRUE(s.reachable);
-  TEST_ASSERT_EQUAL_INT(9, s.nextId);
-  TEST_ASSERT_EQUAL_STRING("Next", s.nextName);
-  TEST_ASSERT_TRUE(s.verdictPending);
+  TEST_ASSERT_EQUAL_INT(0, s.nextId);
+  TEST_ASSERT_EQUAL_STRING("", s.nextName);
+  TEST_ASSERT_FALSE(s.verdictPending);
   TEST_ASSERT_EQUAL_UINT32(2, s.seq);
 }
 
@@ -662,7 +664,8 @@ static void test_failed_slow_requests_wait_their_minute()
   Snapshot s;
   poll_once(p, s, fake_fetch, &b);
   TEST_ASSERT_FALSE(s.tasksKnown);
-  TEST_ASSERT_TRUE(s.requirePlateClear); // never read: the gate stays offered (see bambuddy.h)
+  TEST_ASSERT_FALSE(s.settingsKnown);
+  TEST_ASSERT_FALSE(s.requirePlateClear);
   now = 4000;
   poll_once(p, s, fake_fetch, &b);
   TEST_ASSERT_EQUAL_INT(1, count_asked(b, "/maintenance/"));
@@ -800,10 +803,69 @@ static void test_task_done_reads_the_list_again()
 static Snapshot idle_printer()
 {
   Snapshot s;
-  s.reachable = true;
+  s.reachable = s.settingsKnown = s.queueKnown = s.lastPrintKnown = s.requirePlateClear = true;
+  s.printerId = 1;
+  s.httpCode = 200;
   s.connected = true;
   strcpy(s.state, "IDLE");
   return s;
+}
+
+static void test_command_requires_fresh_matching_records()
+{
+  Snapshot s = idle_printer();
+  s.nextId = 42;
+  s.nextAssigned = s.nextManual = true;
+  Job start = {Command::StartNext, 42, 0};
+  TEST_ASSERT_EQUAL_INT(1, command_target(start, s).printer);
+  s.httpCode = -11;
+  TEST_ASSERT_EQUAL_INT(0, command_target(start, s).printer);
+  s.httpCode = 200;
+  s.nextId++;
+  TEST_ASSERT_EQUAL_INT(0, command_target(start, s).printer);
+  strcpy(s.state, "RUNNING");
+  Job stop = {Command::Stop, 0, 0};
+  s.currentArchive = 8;
+  CommandTarget first = command_target(stop, s);
+  ++s.currentArchive;
+  TEST_ASSERT_FALSE(first == command_target(stop, s));
+  strcpy(s.state, "FINISH");
+  s.awaitingPlateClear = true;
+  Job clear = {Command::ClearPlate, 0, 0};
+  first = command_target(clear, s);
+  ++s.nextId;
+  TEST_ASSERT_FALSE(first == command_target(clear, s));
+  s.queueKnown = false;
+  TEST_ASSERT_EQUAL_INT(0, command_target(clear, s).printer);
+  s.requirePlateClear = s.settingsKnown = false;
+  s.nextId = start.arg;
+  TEST_ASSERT_EQUAL_INT(0, command_target(start, s).printer);
+}
+
+static void test_response_budget_is_reusable()
+{
+  ResponseDocument response;
+  std::string large(50000, 'x');
+  response["value"] = large;
+  TEST_ASSERT_TRUE(response.overflowed());
+  response.clear();
+  TEST_ASSERT_FALSE(deserializeJson(response, "{\"connected\":true}"));
+  TEST_ASSERT_TRUE(response["connected"].as<bool>());
+}
+
+static void test_command_reply_details()
+{
+  char out[48];
+  CommandReply reply;
+  strcpy(reply.conflict, "unmatched_filament");
+  command_result({Command::StartNext, 2, 0}, 409, out, sizeof(out), reply);
+  TEST_ASSERT_EQUAL_STRING("No matching filament loaded", out);
+  reply.configurationPending = true;
+  command_result({Command::AssignSpool, 1, 0}, 201, out, sizeof(out), reply);
+  TEST_ASSERT_EQUAL_STRING("Assigned; tray setup pending", out);
+  reply.noQueueChanges = true;
+  command_result({Command::ResumeQueue, 0, 0}, 200, out, sizeof(out), reply);
+  TEST_ASSERT_EQUAL_STRING("No held jobs to restore", out);
 }
 
 static void test_view_for_each_state()
@@ -995,8 +1057,9 @@ static void test_plate_button_says_when_it_starts_a_print()
   pick_actions(View::PlateClear, s, a);
   TEST_ASSERT_NULL(strstr(a[0].text, "start"));
   s.nextId = 42;
+  s.nextAssigned = true;
   pick_actions(View::PlateClear, s, a);
-  TEST_ASSERT_NOT_NULL(strstr(a[0].text, "start the next print"));
+  TEST_ASSERT_NOT_NULL(strstr(a[0].text, "release the queue"));
   s.nextManual = true; // it waits for its own start
   pick_actions(View::PlateClear, s, a);
   TEST_ASSERT_NULL(strstr(a[0].text, "start"));
@@ -1036,7 +1099,7 @@ static void test_words_of_each_view()
   TEST_ASSERT_EQUAL_STRING("Nothing else queued", f.sub);
   s.nextId = 4;
   pick_face(View::PlateClear, s, f);
-  TEST_ASSERT_EQUAL_STRING("Starts when the plate is clear:", f.sub);
+  TEST_ASSERT_EQUAL_STRING("Next in the queue:", f.sub);
 
   s = idle_printer();
   s.nextId = 4;
@@ -1356,7 +1419,7 @@ static void test_spool_requests()
   TEST_ASSERT_FALSE(command_request({Command::LoadSpools, 0, 0}, 3, r)); // never sent to Bambuddy
   char out[40];
   command_result({Command::AssignSpool, 40, 1}, 403, out, sizeof(out));
-  TEST_ASSERT_EQUAL_STRING("API key lacks Manage Inventory", out);
+  TEST_ASSERT_EQUAL_STRING("Access denied (Manage Inventory)", out);
   TEST_ASSERT_TRUE(command_result({Command::UnassignSpool, 0, 1}, 200, out, sizeof(out)));
   TEST_ASSERT_EQUAL_STRING("Spool removed", out);
 }
@@ -1436,7 +1499,7 @@ static void test_settings_page_escapes_what_it_is_given()
   TEST_ASSERT_TRUE(has(p, "&#39;&gt;&lt;script&gt;"));
   TEST_ASSERT_FALSE(has(p, "\"onfocus=\"y"));
   TEST_ASSERT_FALSE(has(p, "<mini>"));
-  TEST_ASSERT_TRUE(has(p, "A1 &lt;mini&gt; &amp; &quot;co&quot; (id 7)"));
+  TEST_ASSERT_TRUE(has(p, "A1 &lt;mini&gt; &amp; &quot;co&quot;</option>"));
   TEST_ASSERT_TRUE(has(p, "<title>Bambuddy Panel: A1 &lt;mini&gt;")); // which panel this page belongs to
 }
 
@@ -1451,6 +1514,17 @@ static void test_settings_page_states()
   TEST_ASSERT_FALSE(has(first, "Firmware"));               // no version given, none shown
   TEST_ASSERT_FALSE(has(first, "action='/update'"));       // no build name given, no update offered
 
+  d.locked = true;
+  d.url = "http://private.example";
+  d.printerId = 42;
+  d.keySaved = true;
+  TextPage locked;
+  setup_page(locked, d);
+  TEST_ASSERT_TRUE(has(locked, "name='code'"));
+  TEST_ASSERT_FALSE(has(locked, "private.example"));
+  TEST_ASSERT_FALSE(has(locked, "action='/save'"));
+  TEST_ASSERT_FALSE(has(locked, "42"));
+  d.locked = false;
   d.version = "1.2.3";
   TextPage versioned;
   setup_page(versioned, d);
@@ -1463,10 +1537,10 @@ static void test_settings_page_states()
   TEST_ASSERT_TRUE(has(updatable, "bambuddy-panel-&lt;version&gt;-cyd-st7789-app.bin")); // which file to pick
   TEST_ASSERT_TRUE(has(updatable, "Not the <code>-full.bin</code>"));
   TEST_ASSERT_TRUE(has(updatable, "href='https://github.com/loidolt/bambuddy-panel/releases'"));
-  TEST_ASSERT_TRUE(has(updatable, "enctype='multipart/form-data'"));
+  TEST_ASSERT_TRUE(has(updatable, "application/octet-stream"));
   TEST_ASSERT_TRUE(has(updatable, "name='fw' type='file'"));
   // The code goes in the address, where the panel can read it before the file arrives.
-  TEST_ASSERT_TRUE(has(updatable, "this.action='/update?code='+encodeURIComponent("));
+  TEST_ASSERT_TRUE(has(updatable, "fetch('/update?code='+encodeURIComponent("));
   TEST_ASSERT_TRUE(updatable.s.find("action='/update'") > updatable.s.find("action='/save'")); // below the settings
   d.board = "x<y";
   TextPage odd;
@@ -1762,7 +1836,7 @@ int main()
   RUN_TEST(test_poll_round_asks_in_order);
   RUN_TEST(test_poll_round_stops_when_bambuddy_is_away);
   RUN_TEST(test_one_missed_answer_is_not_offline);
-  RUN_TEST(test_failed_side_requests_keep_the_last_known);
+  RUN_TEST(test_failed_side_requests_clear_action_targets);
   RUN_TEST(test_failed_slow_requests_wait_their_minute);
   RUN_TEST(test_slow_requests_survive_the_clock_wrapping);
   RUN_TEST(test_unreadable_status_is_offline_with_its_cause);
@@ -1771,6 +1845,9 @@ int main()
   RUN_TEST(test_poll_round_skips_outcome_while_printing);
   RUN_TEST(test_refused_answer_stops_the_question);
   RUN_TEST(test_task_done_reads_the_list_again);
+  RUN_TEST(test_command_requires_fresh_matching_records);
+  RUN_TEST(test_command_reply_details);
+  RUN_TEST(test_response_budget_is_reusable);
   RUN_TEST(test_view_for_each_state);
   RUN_TEST(test_silence_keeps_the_last_status_for_a_while);
   RUN_TEST(test_poll_round_counts_the_silence);
