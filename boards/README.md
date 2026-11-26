@@ -16,8 +16,9 @@ All are an ESP32 with an SPI panel, so they share one panel driver.
 
 ### None of these has run on the real board yet
 
-Every profile builds, and the screens are checked at both sizes in the simulator, but nobody
-has flashed one. The pins are taken from board definitions other projects use on these boards
+Every profile builds, and the simulator draws every screen at both sizes without failing (at
+320x240 the pictures are compared with the README's; at 480x320 nobody but you looks at them),
+but nobody has flashed one. The pins are taken from board definitions other projects use on these boards
 ([rzeldent/platformio-espressif32-sunton](https://github.com/rzeldent/platformio-espressif32-sunton)
 and [openHASP](https://github.com/HASwitchPlate/openHASP)); what those can't settle is how this
 firmware's drivers behave on them. If you have one, flash it and report what you see. What to
@@ -27,7 +28,7 @@ expect to need, most likely first:
 |---|---|
 | Red and blue swapped | `TFT_RGB_ORDER=TFT_BGR` to `TFT_RGB`, or add it |
 | Colours look like a negative | `TFT_INVERSION_ON` to `TFT_INVERSION_OFF`, or the other way |
-| Picture upside down | `PANEL_ROTATION=1` to `3` (capacitive: also swap the touch mirror, as the file says) |
+| Picture upside down | `PANEL_ROTATION=1` to `3` (capacitive: also swap the touch mirror, as the file says; resistive: the panel asks for a new touch calibration at the next start, since the old one belongs to the other rotation) |
 | Capacitive touch mirrored left-right or top-bottom | flip `TOUCH_MIRROR_X` or `TOUCH_MIRROR_Y` |
 | Capacitive touch dead | the chip's address: `-DTOUCH_I2C_ADDR=0x..` (CST820, FT6336) |
 | Resistive touch lands in the wrong place | recalibrate: hold the screen at start-up |

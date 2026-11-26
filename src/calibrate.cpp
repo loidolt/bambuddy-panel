@@ -4,6 +4,7 @@
 
 #include "board.h"
 #include "display.h"
+#include "messages.h"
 #include "settings.h"
 #include "touch_cal.h"
 #include "ui.h"
@@ -57,8 +58,7 @@ static bool sample(long &outX, long &outY)
 
 bool calibrate_run(bool haveSaved)
 {
-  const char *keeping = haveSaved ? "Keeping the saved calibration."
-                                  : "Using standard values.\nHold the screen at start-up to calibrate.";
+  const char *keeping = haveSaved ? MSG_CAL_KEEP_SAVED : MSG_CAL_KEEP_STANDARD;
   char buf[120];
   static const int target[4][2] = {
       {INSET, INSET},
@@ -74,8 +74,8 @@ bool calibrate_run(bool haveSaved)
     for (int i = 0; i < 4; i++) {
       ui_calibrate(i + 1, 4, target[i][0], target[i][1]);
       if (!sample(rx[i], ry[i])) {
-        snprintf(buf, sizeof(buf), "No touch. %s", keeping);
-        ui_message("Calibration", buf);
+        snprintf(buf, sizeof(buf), MSG_CAL_NO_TOUCH, keeping);
+        ui_message(MSG_CAL_TITLE, buf);
         delay(2500);
         return false;
       }
@@ -87,15 +87,15 @@ bool calibrate_run(bool haveSaved)
       display_set_touch_cal(cal);
       settings_save_touch(cal);
       Serial.printf("[calibrate] saved x %d..%d y %d..%d swap %d\n", cal.x0, cal.x1, cal.y0, cal.y1, cal.swap);
-      ui_message("Calibration", "Saved.");
+      ui_message(MSG_CAL_TITLE, MSG_CAL_SAVED);
       delay(800);
       return true;
     }
-    ui_message("Calibration", "Those taps didn't line up.\nTry again.");
+    ui_message(MSG_CAL_TITLE, MSG_CAL_RETRY);
     delay(1800);
   }
-  snprintf(buf, sizeof(buf), "Giving up. %s", keeping);
-  ui_message("Calibration", buf);
+  snprintf(buf, sizeof(buf), MSG_CAL_GIVING_UP, keeping);
+  ui_message(MSG_CAL_TITLE, buf);
   delay(2500);
   return false;
 }

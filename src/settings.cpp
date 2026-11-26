@@ -6,6 +6,13 @@ Settings settings;
 
 static const char *NS = "panel";
 
+// A touch calibration is only right for the rotation it was made in.
+#ifdef PANEL_ROTATION
+static const uint8_t ROTATION = PANEL_ROTATION;
+#else
+static const uint8_t ROTATION = 0;
+#endif
+
 void settings_load()
 {
   Preferences p;
@@ -32,11 +39,29 @@ void settings_save()
   p.end();
 }
 
+void settings_request_setup()
+{
+  Preferences p;
+  p.begin(NS, false);
+  p.putBool("setup", true);
+  p.end();
+}
+
+bool settings_take_setup_request()
+{
+  Preferences p;
+  p.begin(NS, false);
+  bool asked = p.getBool("setup", false);
+  if (asked) p.remove("setup");
+  p.end();
+  return asked;
+}
+
 bool settings_load_touch(TouchCal &c)
 {
   Preferences p;
   p.begin(NS, true);
-  bool have = p.getBool("tcal", false);
+  bool have = p.getBool("tcal", false) && p.getUChar("trot", 0xFF) == ROTATION;
   if (have) {
     c.x0 = p.getShort("tx0", 0);
     c.x1 = p.getShort("tx1", 0);
@@ -57,6 +82,7 @@ void settings_save_touch(const TouchCal &c)
   p.putShort("ty0", c.y0);
   p.putShort("ty1", c.y1);
   p.putBool("tswap", c.swap);
+  p.putUChar("trot", ROTATION);
   p.putBool("tcal", true);
   p.end();
 }
