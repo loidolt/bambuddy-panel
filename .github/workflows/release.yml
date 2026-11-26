@@ -88,10 +88,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<EOF
-          Pick the file for your board (the names are the builds in the README's tables):
+          Pick the file for your board (the names are the builds in the [list of boards](https://loidolt.github.io/bambuddy-panel/boards/)):
 
           - \`...-full.bin\`: for a board that doesn't run Bambuddy Panel yet. Flash it at address 0x0, see
-            [Flash a release](https://github.com/${GITHUB_REPOSITORY}/blob/$GITHUB_REF_NAME/README.md#flash-a-release).
+            [Get started](https://loidolt.github.io/bambuddy-panel/get-started/#flash-the-firmware).
             It also clears the panel's settings and touch calibration.
           - \`...-app.bin\`: the application alone, for a board that already runs it: upload it on the
             panel's settings page under "Update firmware", or flash it at 0x10000. Settings and touch

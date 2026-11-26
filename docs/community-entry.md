@@ -34,7 +34,7 @@ simulator that runs the same UI code, for working on screens without hardware.
 
 ## The pull request
 
-Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), three changes:
+Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), four changes:
 
 1. `docs/wiki/bambuddy-panel.md` from here goes to `docs/community/bambuddy-panel.md`. Its
    relative links (`../features/api-keys.md`, `../reference/api.md`) are written for that place.
@@ -51,3 +51,5 @@ Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), three
    ```
 3. A line in `mkdocs.yml` under `Community Add-ons`, after Bambutton:
    `- Bambuddy Panel: community/bambuddy-panel.md`
+4. `docs/demo.gif` from here goes to `docs/assets/bambuddy-panel-demo.gif`, where the wiki
+   keeps its images; the page shows it from there.

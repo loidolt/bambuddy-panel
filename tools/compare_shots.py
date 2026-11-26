@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Checks that the README's screenshots show the same pixels as fresh ones from the simulator.
+"""Checks that the screenshots in the README and the docs show the same pixels as fresh ones
+from the simulator.
 
 Compares decoded pixels, not file bytes: the same picture can be packed differently on another
-machine, or by a tool that makes PNGs smaller. Fails when there is nothing to compare, and,
-given the README, when it shows a screenshot that isn't there.
+machine, or by a tool that makes PNGs smaller. Fails when there is nothing to compare, and
+when one of the pages given shows a screenshot that isn't there.
 
-Usage: python3 tools/compare_shots.py docs/screenshots shots [README.md]
+Usage: python3 tools/compare_shots.py docs/screenshots shots [README.md docs/*.md ...]
 """
 import re
 import struct
@@ -83,11 +84,12 @@ def main():
     names = sorted(p.name for p in docs.glob("*.png"))
     if not names:
         problems.append(f"no screenshots in {docs}")
-    if len(sys.argv) > 3:
-        text = Path(sys.argv[3]).read_text()
-        for shown in sorted(set(re.findall(re.escape(docs.as_posix()) + r"/([\w.-]+\.png)", text))):
+    for page in sys.argv[3:]:
+        text = Path(page).read_text()
+        # A page next to the folder names its pictures without the folder's own path.
+        for shown in sorted(set(re.findall(r"\b" + re.escape(docs.name) + r"/([\w.-]+\.png)", text))):
             if shown not in names:
-                problems.append(f"{sys.argv[3]} shows {docs / shown}, which doesn't exist")
+                problems.append(f"{page} shows {docs / shown}, which doesn't exist")
     for name in names:
         if not (fresh / name).exists():
             problems.append(f"{docs / name} has no fresh counterpart in {fresh}")

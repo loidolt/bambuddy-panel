@@ -9,8 +9,13 @@ A small touch panel that sits next to a printer and shows what Bambuddy knows ab
 
 The screen follows the printer's state: progress, time left, layer and temperatures while printing; the *Ask for outcome* question with a thumbs up / thumbs down when a print finishes; **Plate is clear** when Bambuddy waits for it; the next queued jobs, and why the first one is waiting, when idle. Anything that starts a print or can't be undone needs a 1.5 s hold, so a stray touch can't stop a print or start one on a dirty plate.
 
+![A minute with the panel: starting a queued job, the print, the outcome question, clearing the plate, assigning a spool, maintenance, an error](../assets/bambuddy-panel-demo.gif)
+
+*A minute with the panel, recorded from its desktop simulator with a made-up printer.*
+
 **Author:** [loidolt](https://github.com/loidolt)
 **Repository:** [github.com/loidolt/bambuddy-panel](https://github.com/loidolt/bambuddy-panel)
+**Documentation:** [loidolt.github.io/bambuddy-panel](https://loidolt.github.io/bambuddy-panel/)
 **Status:** Independent community project, early
 
 !!! warning "Early"
@@ -42,16 +47,18 @@ The screen follows the printer's state: progress, time left, layer and temperatu
 
 ## Setup
 
-1. Flash a firmware file from the [releases page](https://github.com/loidolt/bambuddy-panel/releases) with `esptool`, or build with PlatformIO. The [README](https://github.com/loidolt/bambuddy-panel#flash-a-release) has both.
+1. Flash a firmware file from the [releases page](https://github.com/loidolt/bambuddy-panel/releases) with `esptool`, or build with PlatformIO. [Get started](https://loidolt.github.io/bambuddy-panel/get-started/) has both, and the rest of the setup in full.
 2. Create an API key for the panel with **Read Status**, **Control Printer** and **Manage Queue**; optionally **Manage Archives** (outcome question), **Manage Maintenance** and **Manage Inventory**. Without a permission the panel says which one the key lacks, and the rest works.
 3. Power the panel. It asks for four taps to calibrate the touch, then shows a QR code for its setup network, where you choose your WiFi.
 4. Once on your WiFi it shows a second QR code for its settings page. Enter the Bambuddy URL and the API key, pick the printer from the list, save.
+
+Later releases go on without USB: the settings page takes the new firmware file, and refuses one built for another board.
 
 ---
 
 ## How it talks to Bambuddy
 
-Bambuddy Panel uses Bambuddy's documented [REST API](../reference/api.md), authenticated with an [API key](../features/api-keys.md) in the `X-API-Key` header. It polls the printer's status, its queue and its last archive about every 4 seconds, and maintenance, settings and spool assignments once a minute. No internal endpoints, no MQTT, no connection to the printer. The README lists [every request it makes](https://github.com/loidolt/bambuddy-panel#how-it-talks-to-bambuddy).
+Bambuddy Panel uses Bambuddy's documented [REST API](../reference/api.md), authenticated with an [API key](../features/api-keys.md) in the `X-API-Key` header. It polls the printer's status, its queue and its last archive about every 4 seconds, and maintenance, settings and spool assignments once a minute. No internal endpoints, no MQTT, no connection to the printer. The documentation lists [every request it makes](https://loidolt.github.io/bambuddy-panel/api/).
 
 The connection is plain HTTP on your LAN, and the key is stored unencrypted in the panel's flash. Give the key only the permissions above and delete it in Bambuddy if a panel goes missing.
 

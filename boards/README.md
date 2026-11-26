@@ -18,7 +18,7 @@ All are an ESP32 with an SPI panel, so they share one panel driver.
 
 That one works: picture, touch calibration, backlight, setup. Every other profile builds, and
 the simulator draws every screen at both sizes without failing (at 320x240 the pictures are
-compared with the README's; at 480x320 nobody but you looks at them), but nobody has flashed
+compared with the ones in `docs/screenshots/`; at 480x320 nobody but you looks at them), but nobody has flashed
 one. The pins are taken from board definitions other projects use on these boards
 ([rzeldent/platformio-espressif32-sunton](https://github.com/rzeldent/platformio-espressif32-sunton)
 and [openHASP](https://github.com/HASwitchPlate/openHASP)); what those can't settle is how this
@@ -68,7 +68,7 @@ For an SPI panel that TFT_eSPI supports, with one of the touch chips there is a 
    without a dimmable backlight or a status LED.
 7. For a screen bigger than 320x240, turn on the text sizes it needs (below).
 8. Look at the UI at that size before flashing: `tools/shots.sh 480x320`.
-9. Add the board to the table above and to the README. CI builds every `[env:...]` in this
+9. Add the board to the table above and to `docs/boards.md`. CI builds every `[env:...]` in this
    folder by itself.
 
 ### Flags a board's file sets
