@@ -11,6 +11,8 @@ static const int ERR_BAD_JSON = -102; // unreadable or cut-off answer
 static const int ERR_HTTPS = -103;    // the panel speaks plain HTTP only
 static const int ERR_NO_MEMORY = -104; // no room for what Bambuddy sent
 
+static const int ERR_STALE = -105;
+
 struct Request {
   const char *method = "POST";
   char path[96] = ""; // after the base URL, starting with /api/v1
@@ -22,7 +24,11 @@ bool command_request(const Job &job, int printerId, Request &out);
 
 // The notice after a command: what happened, in a few words that fit the screen. True when
 // it worked.
-bool command_result(const Job &job, int code, char *out, size_t size);
+struct CommandReply {
+  bool configurationPending = false, noQueueChanges = false;
+  char conflict[24] = "";
+};
+bool command_result(const Job &job, int code, char *out, size_t size, const CommandReply &reply = {});
 
 // The full-screen text while the status request fails.
 void describe_offline(int code, int printerId, char *out, size_t size);

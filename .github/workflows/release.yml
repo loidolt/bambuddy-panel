@@ -7,14 +7,14 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -34,72 +34,41 @@ jobs:
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'boards/*.ini') }}
           restore-keys: pio-${{ runner.os }}-
 
-      - name: Version from the tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-
       - name: Unit tests
         run: pio test -e test
 
-      # Every [env:...] in boards/*.ini, as in build.yml. No OTA password: a release has
-      # updates over WiFi switched off.
-      - name: Firmware, every board
-        run: |
-          envs=$(grep -ho '^\[env:[^]]*' boards/*.ini | sed 's/^\[env://')
-          echo "ENVS=$(echo $envs)" >> "$GITHUB_ENV"
-          PLATFORMIO_BUILD_FLAGS="-DFW_VERSION=\\\"$VERSION\\\"" pio run $(echo "$envs" | sed 's/^/-e /')
+      - name: Build and verify the release packages
+        run: python3 tools/package_firmware.py --build --tag "$GITHUB_REF_NAME"
 
-      # Per board: one file with everything a blank board needs, to flash at 0x0, and the
-      # application alone. The offsets and flash settings are the ones `pio run -t upload` uses.
-      - name: Firmware files
-        run: |
-          mkdir dist
-          boot_app0=~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin
-          for e in $ENVS; do
-            b=.pio/build/$e
-            grep -a -q "bambuddy-panel/$VERSION" $b/firmware.bin || { echo "$e was not built as $VERSION"; exit 1; }
-            if grep -a -q 'bambuddy-panel-%d' $b/firmware.bin; then echo "$e has OTA built in"; exit 1; fi
-            # The name an update through the settings page checks a file by (src/fw_check.h).
-            grep -a -q "bambuddy-panel-board:$e;" $b/firmware.bin || { echo "$e does not carry its board name"; exit 1; }
-            pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32 merge_bin \
-              -o dist/bambuddy-panel-$VERSION-$e-full.bin \
-              --flash_mode dio --flash_freq 40m --flash_size 4MB \
-              0x1000 $b/bootloader.bin 0x8000 $b/partitions.bin 0xe000 $boot_app0 0x10000 $b/firmware.bin
-            cp $b/firmware.bin dist/bambuddy-panel-$VERSION-$e-app.bin
-          done
-          (cd dist && sha256sum *.bin > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-files
+          path: dist/
+          if-no-files-found: error
 
-      # The license texts that go with the firmware files (THIRD_PARTY.md). The last four are
-      # in nothing a build fetches, so they come from their projects, at fixed commits.
-      - name: License notices
-        run: |
-          python3 tools/collect_notices.py notices
-          raw=https://raw.githubusercontent.com
-          curl -fsSL -o notices/Montserrat-OFL.txt $raw/JulietaUla/Montserrat/555facfb2a18c72c3c0380f0d9c0f060453a9058/OFL.txt
-          curl -fsSL -o notices/FontAwesome-LICENSE.txt $raw/FortAwesome/Font-Awesome/14c65a3747d0f3b751f15831fc719236aea8729d/LICENSE.txt
-          curl -fsSL -o notices/esp-idf-LICENSE.txt $raw/espressif/esp-idf/v4.4.7/LICENSE
-          curl -fsSL -o notices/esp-idf-COPYRIGHT.rst $raw/espressif/esp-idf/v4.4.7/docs/en/COPYRIGHT.rst
-          for f in notices/Montserrat-OFL.txt notices/FontAwesome-LICENSE.txt notices/esp-idf-LICENSE.txt notices/esp-idf-COPYRIGHT.rst; do
-            test -s $f || { echo "$f is empty"; exit 1; }
-          done
-          zip -r dist/bambuddy-panel-$VERSION-notices.zip notices
-
-      - name: Draft release
+  draft:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-files
+          path: dist
+      - name: Create draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          (cd dist && sha256sum --check SHA256SUMS.txt)
           cat > notes.md <<EOF
-          Pick the file for your board (the names are the builds in the [list of boards](https://loidolt.github.io/bambuddy-panel/boards/)):
-
-          - \`...-full.bin\`: for a board that doesn't run Bambuddy Panel yet. Flash it at address 0x0, see
-            [Get started](https://loidolt.github.io/bambuddy-panel/get-started/#flash-the-firmware).
-            It also clears the panel's settings and touch calibration.
-          - \`...-app.bin\`: the application alone, for a board that already runs it: upload it on the
-            panel's settings page under "Update firmware", or flash it at 0x10000. Settings and touch
-            calibration are kept.
-
-          \`notices.zip\` has the license texts of everything the firmware contains.
-
+          Choose the file matching your [board profile](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/boards.md).
+          Use the full image at 0x0 for initial USB installation or recovery. This clears the panel configuration.
+          For an existing panel, upload the app image through its settings page to preserve configuration.
+          See the [installation guide](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/get-started.md).
+          The notices ZIP and rebuildable source archive accompany the firmware.
           EOF
-          pre=""; case "$VERSION" in *-*) pre="--prerelease";; esac
-          gh release create "$GITHUB_REF_NAME" dist/* --draft $pre --title "$GITHUB_REF_NAME" \
-            --notes-file notes.md --generate-notes
+          flags=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --draft "${flags[@]}" \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes

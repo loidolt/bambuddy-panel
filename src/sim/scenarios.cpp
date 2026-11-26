@@ -25,6 +25,7 @@ static void add_slot(Snapshot &s, int ams, int tray, const char *type, uint32_t 
   slot.ams = (uint8_t)ams;
   slot.tray = (uint8_t)tray;
   SET(slot.type, type);
+  slot.empty = !*type;
   slot.rgb = rgb;
 }
 
@@ -42,6 +43,8 @@ static void assign(Snapshot &s, int ams, int tray, int spool, const char *name, 
 static Snapshot base()
 {
   Snapshot s;
+  s.settingsKnown = s.queueKnown = s.lastPrintKnown = true;
+  s.requirePlateClear = true;
   s.tasksKnown = true;
   add_task(s, "Clean Build Plate", 2, false, -3.2f);
   add_task(s, "Lubricate Linear Rails", 1, false, 8.4f);

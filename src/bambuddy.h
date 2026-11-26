@@ -5,6 +5,7 @@
 
 // One maintenance task for this printer, as Bambuddy tracks it.
 struct Task {
+  uint32_t lastPerformed = 0;
   int id = 0;
   char name[28] = "";
   uint8_t level = 0;  // 0 fine, 1 due soon, 2 due
@@ -22,6 +23,7 @@ static const int MAX_MORE = 2;   // queued jobs shown after the next one
 struct Slot {
   uint8_t ams = 0, tray = 0;
   char type[12] = "";   // what the printer says is in it ("PETG"); empty when nothing is
+  bool empty = false;   // explicitly absent according to the printer
   uint32_t rgb = 0;     // its colour, as the printer has it
 };
 static const int MAX_SLOTS = 18; // four AMS of four, and two external
@@ -58,6 +60,8 @@ struct Snapshot {
   char name[24] = "";
   char state[16] = "";     // RUNNING, PAUSE, FINISH, FAILED, IDLE, PREPARE, SLICING, ...
   char job[64] = "";
+  int currentArchive = 0;
+  uint32_t fileIdentity = 0; // full server filename, before shortening it for display
   char stage[32] = "";     // current stage name, when the printer reports one
   float progress = 0;      // 0..100
   int remainingMin = 0;    // minutes, as the printer reports it
@@ -65,12 +69,14 @@ struct Snapshot {
   int totalLayers = 0;
   float nozzle = 0, bed = 0, chamber = 0;
   bool awaitingPlateClear = false;
+  uint32_t errorIdentity = 0;
   int errorCount = 0;      // HMS errors that count as a problem (see hms_counts)
   char errors[MAX_ERRORS][96] = {}; // the first few, description or code
 
   // Bambuddy's "require plate clear" setting. Its plate-clear gate is only shown when this is
-  // on; until the setting has been read the panel assumes it is.
-  bool requirePlateClear = true;
+  // on and has been read successfully.
+  bool settingsKnown = false, queueKnown = false, lastPrintKnown = false;
+  bool requirePlateClear = false;
 
   int queued = 0;          // pending queue items for this printer (its own and "any <model>")
   int nextId = 0;          // first pending item, 0 when none
@@ -88,6 +94,7 @@ struct Snapshot {
   int runningId = 0;
   char runningName[64] = "";
   bool sending = false;    // that job has been sent and the printer has not taken it up yet
+  uint32_t heldIdentity = 0;
   int held = 0;            // items Bambuddy skipped because the previous print failed
 
   // Bambuddy's "ask for outcome": the last print waits for a good / bad answer.
@@ -109,6 +116,7 @@ struct Snapshot {
   int assignedCount = 0;
   bool assignedKnown = false; // Bambuddy has answered about assignments at least once
 
+  uint32_t answeredRequest = 0, settledRequest = 0;
   uint32_t toastSeq = 0;   // goes up when a command finishes
   char toast[40] = "";     // its result, to show briefly
   bool toastBad = false;   // the command failed
@@ -137,9 +145,18 @@ struct Job {
   int arg2;
 };
 
-void bambuddy_begin(); // starts the background task; call once, after WiFi is set up
+struct CommandTarget {
+  int printer, item, related;
+  uint32_t file;
+  int next;
+  bool operator==(const CommandTarget &other) const {
+    return printer == other.printer && item == other.item && related == other.related && file == other.file && next == other.next;
+  }
+};
+
+bool bambuddy_begin(); // starts the background task; call once, after WiFi is set up
 // Queues a command and returns at once. False when the queue is full.
-bool bambuddy_send(Command c, int arg = 0, int arg2 = 0);
+bool bambuddy_send(Command c, int arg = 0, int arg2 = 0, CommandTarget target = {}, uint32_t request = 0);
 void bambuddy_snapshot(Snapshot &out);
 
 // The spool list is too big to hand around whole: the background task keeps it, and the

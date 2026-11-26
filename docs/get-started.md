@@ -25,13 +25,12 @@ over WiFi by `http://`.
 
 ## Flash the firmware
 
-The [releases](https://github.com/loidolt/bambuddy-panel/releases) have a firmware file for
-every build in the [list of boards](boards.md). For a board that doesn't run Bambuddy Panel yet, take your
+Build from source using [Development](development.md#build-and-flash) until the first release is available. Each [release](https://github.com/loidolt/bambuddy-panel/releases) is packaged by [board profile](boards.md). For a board that doesn't run Bambuddy Panel yet, take your
 build's `-full.bin` and write it at address 0x0, with [esptool](https://docs.espressif.com/projects/esptool/)
 (`pip install esptool`):
 
 ```bash
-esptool.py --chip esp32 write_flash 0x0 bambuddy-panel-0.1.0-cyd-st7789-full.bin
+esptool --chip esp32 write-flash 0x0 bambuddy-panel-0.1.0-cyd-st7789-full.bin
 ```
 
 Any other ESP32 flashing tool does as well, as long as it writes the file at 0x0. A `-full.bin`
@@ -62,27 +61,26 @@ release, see [Updating](updating.md): that needs no USB.
     - **Answering the outcome question** works on the owner's own prints, or on anyone's if the
       owner may edit all archives.
 
-    Without a permission the panel says which one the key lacks; the rest works.
+    An access denial identifies the relevant permission. Check both the key scope and its owner’s access to that printer or record.
 
     Bambuddy's settings page can't limit a key to one printer (1.3.x); its API can, with
     `PATCH /api/v1/api-keys/{key_id}` and the body `{"printer_ids": [<printer id>]}`.
 2. You don't need to look up the printer's id: the panel's settings page lists the printers
     the key may see. (By hand: `GET /api/v1/printers/` lists each printer with its `id`.)
-3. Power the panel. A new panel first asks you to tap four crosses (touch calibration), then
-    opens the setup network `BambuddyPanel-Setup` and shows a QR code for it, with its name and
+3. Power the panel. A resistive panel first asks you to tap four crosses for calibration. A panel without saved WiFi opens the setup network `BambuddyPanel-Setup` and shows a QR code for it, with its name and
     password beside it. Scan the code with a phone, or join the network by hand, and choose
     your WiFi in the page that opens (or open `192.168.4.1`). That page asks for the WiFi only.
 4. Once it's on your WiFi, the panel shows a second QR code, with its address and a code beside
     it, e.g. `192.168.1.80` and `abcd-efgh`. Scan it, or open that address in any browser on the
     same network and type the code. Enter the Bambuddy URL (`http://host:port`; https isn't
     supported) and the API key. With those in, the page tries the key with Bambuddy, without
-    saving, and turns the printer field into a list of the printers the key may see. The page
+    saving, and suggests up to 16 printers. You can also enter the printer id directly. The page
     also explains which permissions the key needs. It's an ordinary web page, so you can switch
     away to copy the key and come back. **Save** checks the settings with Bambuddy straight away
     and says what's wrong if it doesn't accept them (or, if Bambuddy is only down for now, **Use
     these settings anyway**).
 
-To change settings later, open the maintenance screen (the wrench) and hold the **gear**. The
+To change settings later, open the maintenance screen (the wrench) and press **Hold for settings** until the bar fills. The
 panel restarts into its settings screen, with a new code. From there:
 
 - the settings page again (leave the key blank to keep the saved one; with a new Bambuddy URL

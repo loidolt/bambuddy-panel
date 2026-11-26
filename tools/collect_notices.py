@@ -1,48 +1,57 @@
 #!/usr/bin/env python3
-"""Gathers the license texts that have to travel with a built firmware into one folder.
-
-Takes them from where a build left them: this repository, and the libraries PlatformIO fetched
-into .pio/libdeps. Build a board first. THIRD_PARTY.md says which texts this cannot find.
-
-Usage: python3 tools/collect_notices.py notices [env]     (env defaults to cyd-st7789)
-"""
+"""Collect notices from installed packages and immutable upstream sources after a board build."""
+import concurrent.futures
+import json
+import os
+from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-NOT_IN_FIRMWARE = {"Unity"}  # tests only
+ROOT = Path(__file__).resolve().parents[1]
+CORE = Path(os.environ.get("PLATFORMIO_CORE_DIR", Path.home() / ".platformio"))
 LICENSE_NAME = re.compile(r"^(licen[cs]e|copying|notice)(\.\w+)?$", re.I)
 
 
-def main():
-    out = Path(sys.argv[1])
-    env = sys.argv[2] if len(sys.argv) > 2 else "cyd-st7789"
-    libs = ROOT / ".pio" / "libdeps" / env
-    if not libs.is_dir():
-        sys.exit(f"{libs} is missing: build first (pio run -e {env})")
-    out.mkdir(parents=True, exist_ok=True)
+def collect(out, env="cyd-st7789"):
+    def copy(source, name):
+        dest = out / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, dest)
 
-    shutil.copy(ROOT / "THIRD_PARTY.md", out / "THIRD_PARTY.md")
-    shutil.copy(ROOT / "LICENSE", out / "bambuddy-panel-LICENSE.txt")
-    shutil.copy(ROOT / "tools" / "icons" / "LICENSE.txt", out / "material-icons-LICENSE.txt")
+    libs = ROOT / ".pio/libdeps" / env
+    for name in ("LICENSE", "THIRD_PARTY.md", "tools/icons/LICENSE.txt", "tools/notice-sources.json"):
+        copy(ROOT / name, name)
+    for name in ("ArduinoJson", "lvgl", "TFT_eSPI", "WiFiManager", "XPT2046_Touchscreen"):
+        folder = libs / name
+        files = sorted(f for f in folder.iterdir() if f.is_file() and LICENSE_NAME.match(f.name))
+        if name == "XPT2046_Touchscreen" and not files:
+            files = [folder / "XPT2046_Touchscreen.h", folder / "XPT2046_Touchscreen.cpp"]
+        if not files:
+            raise ValueError(f"Missing license for {name}")
+        for f in files:
+            copy(f, Path(name) / f.name)
+    for name in ("src/libs/qrcode/qrcodegen.h", "src/stdlib/builtin/lv_tlsf.h"):
+        copy(libs / "lvgl" / name, Path("lvgl") / name)
+    packages = CORE / "packages"
+    copy(packages / "framework-arduinoespressif32/cores/esp32/libb64/LICENSE", "libb64-LICENSE")
+    gcc = packages / "toolchain-xtensa-esp32/share/licenses/gcc"
+    for name in ("COPYING3", "COPYING.RUNTIME"):
+        copy(gcc / name, Path("gcc") / name)
 
-    count = 0
-    for lib in sorted(p for p in libs.iterdir() if p.is_dir() and p.name not in NOT_IN_FIRMWARE):
-        found = [f for f in sorted(lib.iterdir()) if f.is_file() and LICENSE_NAME.match(f.name)]
-        if not found:
-            # No license file: the notice is at the top of the sources. Take those along whole.
-            found = sorted(f for f in lib.iterdir() if f.suffix in (".h", ".cpp", ".c"))
-            if not found:
-                sys.exit(f"{lib.name}: no license file and no source file to take its notice from")
-        for f in found:
-            shutil.copy(f, out / f"{lib.name}-{f.name}")
-        count += 1
-    if count == 0:
-        sys.exit(f"no libraries in {libs}")
-    print(f"notices for {count} libraries, the icons and the panel itself are in {out}/")
+    def download(entry):
+        name, url = entry
+        dest = out / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["curl", "--retry", "3", "--max-time", "60", "-fsSL", url, "-o", str(dest)], check=True)
+        if not dest.stat().st_size:
+            raise ValueError(f"Empty notice {name}")
+
+    sources = json.loads((ROOT / "tools/notice-sources.json").read_text())
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(download, sources.items()))
 
 
 if __name__ == "__main__":
-    main()
+    collect(Path(sys.argv[1]), *sys.argv[2:])

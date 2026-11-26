@@ -38,6 +38,12 @@ void spool_name(char *out, size_t size, const char *brand, const char *subtype, 
   copy_ascii(out, size, raw[0] ? raw : "Spool");
 }
 
+int bounded_grams(float grams)
+{
+  if (!(grams >= 0)) return 0;
+  return grams > 100000 ? 100000 : (int)(grams + 0.5f);
+}
+
 bool parse_spools(JsonDocument &doc, SpoolStore &st)
 {
   if (!st.items) st.items = (Spool *)calloc(MAX_SPOOLS, sizeof(Spool));
@@ -56,7 +62,7 @@ bool parse_spools(JsonDocument &doc, SpoolStore &st)
     s.rgb = parse_rgb(o["rgba"]);
     if (o["label_weight"].is<float>() && o["weight_used"].is<float>()) {
       float left = o["label_weight"].as<float>() - o["weight_used"].as<float>();
-      s.remainG = left < 0 ? 0 : left > 100000 ? 100000 : (int)(left + 0.5f);
+      s.remainG = bounded_grams(left);
     }
   }
   st.state = SpoolState::Ready;

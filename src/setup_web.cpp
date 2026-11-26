@@ -3,7 +3,8 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <Update.h>
-#include <WebServer.h>
+#include "settings_http.h"
+#include "http_json.h"
 #include <WiFi.h>
 #include <esp_ota_ops.h>
 
@@ -20,7 +21,10 @@
 static const uint32_t IDLE_MS = 10 * 60 * 1000; // a panel that was set up already goes back to work
 static const int MAX_WRONG = 10;                // wrong codes before the panel shows a new one
 
-static WebServer *server;
+static SettingsHttp *server;
+static Settings draft;
+static bool offlineSave = false;
+static int draftTicket = 0;
 static char code[10];   // "abcd-efgh", shown on the panel's screen only
 static int wrong = 0;
 static WebSetup result;
@@ -33,18 +37,6 @@ static uint32_t lastSave = 0; // or the last piece of a firmware upload
 static const char BOARD_STAMP[] = FW_BOARD_MARKER BOARD_ENV ";";
 static char thisBoard[sizeof(((FwCheck *)nullptr)->board)];
 static_assert(sizeof(BOARD_ENV) <= sizeof(thisBoard), "the build's name is too long for the board check");
-
-// A firmware upload, from its first piece to the answer.
-static struct {
-  bool seen;     // a file came with this request
-  bool codeOk;   // checked once, before anything is written
-  bool writing;  // the spare slot is being written
-  bool done;     // written, checked and made the one to start from
-  FwVerdict verdict;
-  FwCheck check;
-  size_t room;   // what the spare slot holds
-  String error;  // from the flash writer
-} up;
 
 // The printers the saved key may see, read from Bambuddy after a Save, so the page can offer
 // them by name instead of asking for an id. Empty until then, or when Bambuddy didn't list any.
@@ -135,54 +127,67 @@ struct StringPage : PageText {
 static void send_page(const String &msg, const char *kind, const String &typedCode, bool finishAnyway, bool done = false)
 {
   String p;
-  p.reserve(8200);
   StringPage out(p);
   PageData d;
+  if (!done && typedCode.isEmpty()) {
+    d.locked = true;
+    setup_page(out, d);
+    return server->send(403, "text/html", p);
+  }
+  p.reserve(8200);
   d.msg = msg.c_str();
   d.kind = kind;
   d.typedCode = typedCode.c_str();
-  d.url = settings.url.c_str();
-  d.keySaved = settings.key.length() > 0;
-  d.printerId = settings.printerId;
+  d.url = draft.url.c_str();
+  d.keySaved = draft.key.length() > 0;
+  d.printerId = draft.printerId;
   d.choices = choices;
   d.choiceCount = choiceCount;
   d.finishAnyway = finishAnyway;
+  d.ticket = draftTicket;
   d.done = done;
   d.version = FW_VERSION;
   d.board = thisBoard;
   for (int i = 0; i < choiceCount; i++)
-    if (choices[i].id == settings.printerId) d.printerName = choices[i].name;
+    if (choices[i].id == draft.printerId) d.printerName = choices[i].name;
   setup_page(out, d);
-  server->sendHeader("Cache-Control", "no-store");
   server->send(200, "text/html", p);
 }
 
 // Asks Bambuddy for the printer's status with the saved settings, as the panel will.
 static int check_bambuddy()
 {
-  if (settings.url.startsWith("https://")) return ERR_HTTPS;
-  WiFiClient client;
+  if (draft.url.startsWith("https://")) return ERR_HTTPS;
+  ResponseClient client;
   HTTPClient http;
   char path[48];
-  snprintf(path, sizeof(path), "/api/v1/printers/%d/status", settings.printerId);
-  if (!http.begin(client, settings.url + path)) return ERR_BAD_URL;
+  snprintf(path, sizeof(path), "/api/v1/printers/%d/status", draft.printerId);
+  if (!http.begin(client, draft.url + path)) return ERR_BAD_URL;
+  http.useHTTP10(true);
   http.setConnectTimeout(3000);
   http.setTimeout(5000);
   http.setUserAgent(FW_USER_AGENT);
-  http.addHeader("X-API-Key", settings.key);
+  http.addHeader("X-API-Key", draft.key);
   http.addHeader("Accept", "application/json");
   int c = http.GET();
+  if (client.exceeded()) c = ERR_BAD_JSON;
+  if (c == 200) {
+    JsonDocument filter;
+    filter["connected"] = true;
+    ResponseDocument doc;
+    c = read_json(http, doc, filter);
+    if (c == 200 && !doc["connected"].is<bool>()) c = ERR_BAD_JSON;
+  }
   http.end();
   return c;
 }
 
-// Reads the printers a key may see into `choices`. Takes a plain list of printers, or one
-// wrapped in {"printers": [...]} or {"items": [...]}.
+// Bambuddy returns a JSON array. Keep the first 16 suggestions and allow any numeric id.
 static int fetch_printers(const String &url, const String &key)
 {
   choiceCount = 0;
   if (url.startsWith("https://")) return ERR_HTTPS;
-  WiFiClient client;
+  ResponseClient client;
   HTTPClient http;
   if (!http.begin(client, url + "/api/v1/printers/")) return ERR_BAD_URL;
   http.useHTTP10(true);
@@ -192,19 +197,15 @@ static int fetch_printers(const String &url, const String &key)
   http.addHeader("X-API-Key", key);
   http.addHeader("Accept", "application/json");
   int c = http.GET();
+  if (client.exceeded()) c = ERR_BAD_JSON;
   if (c == 200) {
     JsonDocument filter;
     filter[0]["id"] = true;
     filter[0]["name"] = true;
-    filter["printers"][0]["id"] = true;
-    filter["printers"][0]["name"] = true;
-    filter["items"][0]["id"] = true;
-    filter["items"][0]["name"] = true;
-    JsonDocument doc;
-    if (deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter))) c = ERR_BAD_JSON;
-    JsonArrayConst list = doc.is<JsonArrayConst>()       ? doc.as<JsonArrayConst>()
-                          : doc["printers"].is<JsonArrayConst>() ? doc["printers"].as<JsonArrayConst>()
-                                                                 : doc["items"].as<JsonArrayConst>();
+    ResponseDocument doc;
+    c = read_json(http, doc, filter);
+    if (c == 200 && !doc.is<JsonArrayConst>()) c = ERR_BAD_JSON;
+    JsonArrayConst list = c == 200 ? doc.as<JsonArrayConst>() : JsonArrayConst();
     for (JsonObjectConst p : list) {
       if (choiceCount >= MAX_CHOICES) break;
       int id = p["id"] | 0;
@@ -228,8 +229,10 @@ static String describe_check(int c, bool listing = false)
   case 403: snprintf(out, sizeof(out), "The API key lacks Read Status, or its owner may not see printers."); break;
   case 404:
     snprintf(out, sizeof(out), "Bambuddy has no printer %d, or the API key is limited to other printers.",
-             settings.printerId);
+             draft.printerId);
     break;
+  case ERR_BAD_JSON: return "The server did not return a recognizable Bambuddy response.";
+  case ERR_NO_MEMORY: return "The response was too large for this panel.";
   case ERR_HTTPS: snprintf(out, sizeof(out), "Use an http:// address; the panel doesn't speak https."); break;
   case ERR_BAD_URL: snprintf(out, sizeof(out), "That address isn't valid."); break;
   case -1: snprintf(out, sizeof(out), "Nothing answered at that address. Check the host and port."); break;
@@ -242,7 +245,31 @@ static String describe_check(int c, bool listing = false)
 }
 
 // The link in the panel's QR code carries the code, so it needn't be typed.
-static void handle_root() { send_page("", "", server->arg("code"), false); }
+static void handle_root()
+{
+  String typed = server->arg("code");
+  send_page("", "", typed.length() && code_ok() ? typed : String(), false);
+}
+
+static bool form_url(char (&url)[128])
+{
+  String raw = server->arg("url");
+  raw.trim();
+  if (raw.length() + (raw.indexOf("://") < 0 ? 7 : 0) >= sizeof(url)) return false;
+  raw.toCharArray(url, sizeof(url));
+  normalize_url(url, sizeof(url));
+  if (!url[0]) return true;
+  if (strncmp(url, "http://", 7) || !url[7] || url[7] == '/' || strpbrk(url, " @?#\\"))
+    return false;
+  return true;
+}
+
+static bool commit_draft(const String &typed)
+{
+  if (settings_save(draft)) return true;
+  send_page("Could not write settings to flash. Check storage and try again.", "e", typed, offlineSave);
+  return false;
+}
 
 static void handle_save()
 {
@@ -254,58 +281,58 @@ static void handle_save()
   lastSave = millis();
 
   char url[128];
-  snprintf(url, sizeof(url), "%s", server->arg("url").c_str());
-  normalize_url(url, sizeof(url));
-  bool moved = settings.url != url; // the saved one is normalised too
+  offlineSave = false;
+  draftTicket = (esp_random() & 0x3fffffff) + 1;
+  if (!form_url(url)) return send_page("Enter a valid HTTP server address of at most 127 characters.", "e", typed, false);
+  bool moved = draft.url != url; // the saved one is normalised too
   String key = server->arg("key");
   key.trim();
   bool keyDropped = false;
-  settings.url = url;
-  if (key.length()) settings.key = key;
-  else if (moved && settings.key.length()) {
-    settings.key = ""; // or whoever is at the panel could have the key sent to their own server
+  draft.url = url;
+  if (key.length()) draft.key = key;
+  else if (moved && draft.key.length()) {
+    draft.key = ""; // or whoever is at the panel could have the key sent to their own server
     keyDropped = true;
   }
-  settings.printerId = server->arg("printer").toInt();
+  String printer = server->arg("printer");
+  const char *start = printer.c_str();
+  char *end = nullptr;
+  errno = 0;
+  long id = strtol(start, &end, 10);
+  draft.printerId = !errno && end != start && !*end && id > 0 && id <= INT_MAX ? (int)id : 0;
+  choiceCount = 0;
 
   // With an address and key, list the printers the key may see, so the page can offer them by
   // name. It also tells, before the status check, whether the address and key work at all.
-  int listed = settings.url.length() && settings.key.length() ? fetch_printers(settings.url, settings.key) : 0;
-  if (settings.printerId > 0 && choiceCount) {
-    bool known = false;
-    for (int i = 0; i < choiceCount; i++) known |= choices[i].id == settings.printerId;
-    if (!known) settings.printerId = 0; // not one the key may see: choose again
-  }
-  if (settings.printerId <= 0 && choiceCount == 1) settings.printerId = choices[0].id; // the only one
-  settings_save();
+  int listed = draft.url.length() && draft.key.length() ? fetch_printers(draft.url, draft.key) : 0;
+  if (draft.printerId <= 0 && choiceCount == 1) draft.printerId = choices[0].id;
 
   String missing;
   auto need = [&missing](const char *what) {
     if (missing.length()) missing += ", ";
     missing += what;
   };
-  if (!settings.url.length()) need("the Bambuddy address");
-  if (!settings.key.length()) need(keyDropped ? "the API key (again, for the new address)" : "the API key");
-  if (settings.printerId <= 0) need(choiceCount ? "the printer (choose it below)" : "the printer id");
+  if (!draft.url.length()) need("the Bambuddy address");
+  if (!draft.key.length()) need(keyDropped ? "the API key (again, for the new address)" : "the API key");
+  if (draft.printerId <= 0) need(choiceCount ? "the printer (choose it below)" : "the printer id");
   if (missing.length()) {
-    Serial.printf("[setup] saved, still missing: %s\n", missing.c_str());
-    String msg = "Saved. Still needed: " + missing + ".";
+    String msg = "Still needed: " + missing + ".";
     if (listed != 0 && listed != 200) msg += " Listing the printers failed: " + describe_check(listed, true);
     send_page(msg, "e", typed, false);
     return;
   }
 
   int c = check_bambuddy();
-  Serial.printf("[setup] saved, Bambuddy check -> %d\n", c);
+  Serial.printf("[setup] Bambuddy check -> %d\n", c);
   if (c == 200) {
+    if (!commit_draft(typed)) return;
     send_page("Saved, and Bambuddy answered. The panel is starting; you can close this page.", "ok", "", false, true);
     result = WebSetup::Done;
     finished = true;
     return;
   }
-  send_page("Saved, but " + describe_check(c) + " Fix it and save again, or use the settings as they are "
-                                                 "if Bambuddy is only down for now.",
-            "e", typed, true);
+  offlineSave = c == -1 || c == -11 || (c >= 500 && c <= 599);
+  send_page(describe_check(c) + " Your previous settings are still saved.", "e", typed, offlineSave);
 }
 
 // Tries an address and key without saving them, and answers with the printers the key may see.
@@ -314,11 +341,9 @@ static void handle_check()
   JsonDocument out;
   out["ok"] = false;
   out["printers"].to<JsonArray>();
-  out["selected"] = settings.printerId;
   auto reply = [&out]() {
     String body;
     serializeJson(out, body);
-    server->sendHeader("Cache-Control", "no-store");
     server->send(200, "application/json", body);
   };
   if (!code_ok()) {
@@ -326,18 +351,21 @@ static void handle_check()
     return reply();
   }
   char url[128];
-  snprintf(url, sizeof(url), "%s", server->arg("url").c_str());
-  normalize_url(url, sizeof(url));
+  out["selected"] = draft.printerId;
+  if (!form_url(url)) {
+    out["msg"] = "Enter a valid HTTP address of at most 127 characters.";
+    return reply();
+  }
   String key = server->arg("key");
   key.trim();
   // A blank key means the saved one, but only at the address it was saved with.
-  if (!key.length() && settings.key.length() && settings.url == url) key = settings.key;
+  if (!key.length() && draft.key.length() && draft.url == url) key = draft.key;
   if (!url[0]) {
     out["msg"] = "Enter the Bambuddy address first.";
     return reply();
   }
   if (!key.length()) {
-    out["msg"] = settings.key.length() ? "A new address needs the API key typed in again." : "Enter the API key first.";
+    out["msg"] = draft.key.length() ? "A new address needs the API key typed in again." : "Enter the API key first.";
     return reply();
   }
   int c = fetch_printers(url, key);
@@ -353,9 +381,9 @@ static void handle_check()
     o["id"] = choices[i].id;
     o["name"] = choices[i].name;
   }
-  out["msg"] = choiceCount == 0   ? "The key works, but it may not see any printers."
-               : choiceCount == 1 ? "The key works."
-                                  : "The key works. Choose the printer below.";
+  out["msg"] = choiceCount == 0   ? "Bambuddy returned no printers."
+               : choiceCount == 1 ? "Bambuddy listed one printer."
+                                  : "Choose a listed printer or enter its id.";
   reply();
 }
 
@@ -365,10 +393,11 @@ static void handle_finish()
     send_page("That code doesn't match the one on the panel's screen.", "e", "", true);
     return;
   }
-  if (!settings.complete()) {
-    send_page("The address, API key and printer id are all needed first.", "e", server->arg("code"), false);
+  if (!offlineSave || server->arg("ticket") != String(draftTicket) || !draft.complete()) {
+    send_page("Save the current settings and review the connection result first.", "e", server->arg("code"), false);
     return;
   }
+  if (!commit_draft(server->arg("code"))) return;
   send_page("The panel is starting with these settings; you can close this page.", "ok", "", false, true);
   result = WebSetup::Done;
   finished = true;
@@ -389,112 +418,53 @@ static void handle_wifi()
 
 // ---- firmware update: a file uploaded from the page into the spare application slot
 
-static void update_stop()
-{
-  if (!up.writing) return;
-  Update.abort(); // the slot the panel runs from was never touched
-  up.writing = false;
-  show_screen();
-}
-
-// Called with each piece of the file while the request is still arriving. The form's own fields
-// aren't readable yet at that point, so the code comes in the address (/update?code=...).
-static void handle_update_file()
-{
-  // The web server also calls this for a body that isn't a form, and has no upload to give then.
-  if (!server->header("Content-Type").startsWith("multipart/")) return;
-  HTTPUpload &u = server->upload();
-  if (u.name != "fw" || up.done) return;
-  lastSave = millis(); // a slow upload isn't an idle page
-  switch (u.status) {
-  case UPLOAD_FILE_START:
-    update_stop();
-    up.seen = true;
-    up.writing = false;
-    up.verdict = FwVerdict::Ok;
-    up.check = FwCheck();
-    up.error = "";
-    up.codeOk = code_ok(); // before a single byte is written
-    break;
-  case UPLOAD_FILE_WRITE: {
-    if (!up.seen || !up.codeOk || up.verdict != FwVerdict::Ok || up.error.length() || !u.currentSize) return;
-    bool firstPiece = up.check.size == 0;
-    fw_check_feed(up.check, u.buf, u.currentSize);
-    if (firstPiece) {
-      up.verdict = fw_check_start(up.check);
-      if (up.verdict != FwVerdict::Ok) return; // not an application: nothing is written at all
-      const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
-      up.room = slot ? slot->size : 0;
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-        up.error = Update.errorString();
-        return;
-      }
-      up.writing = true;
-      Serial.println("[setup] firmware upload started");
-      ui_message(MSG_UPDATING_TITLE, MSG_UPDATING_BODY);
-    }
-    if (up.check.size > up.room) {
-      up.verdict = FwVerdict::TooBig;
-      update_stop();
-    } else if (Update.write(u.buf, u.currentSize) != u.currentSize) {
-      up.error = Update.errorString();
-      update_stop();
-    }
-    break;
-  }
-  case UPLOAD_FILE_END:
-    if (!up.writing) return;
-    up.verdict = fw_check_end(up.check, thisBoard, up.room);
-    if (up.verdict != FwVerdict::Ok) {
-      update_stop(); // for another board, or no board named: the panel keeps what it runs
-    } else if (!Update.end(true)) {
-      up.error = Update.errorString();
-      update_stop();
-    } else {
-      up.writing = false;
-      up.done = true;
-      // From here the panel starts from the new firmware, whether or not the answer gets out.
-      result = WebSetup::Updated;
-      finished = true;
-    }
-    break;
-  case UPLOAD_FILE_ABORTED:
-    update_stop();
-    up.seen = false;
-    break;
-  }
-}
-
-// Called when the whole request has arrived: says what became of the file.
 static void handle_update()
 {
-  lastSave = millis();
+  if (!code_ok()) return send_page("", "e", "", false);
   String typed = server->arg("code");
-  if (up.done) {
-    Serial.printf("[setup] firmware updated (%u bytes), restarting\n", (unsigned)up.check.size);
-    send_page("Updated. The panel restarts with the new firmware and keeps its settings; you can close this page.",
-              "ok", "", false, true);
-    return;
+  const esp_partition_t *slot = esp_ota_get_next_update_partition(nullptr);
+  const size_t length = server->contentLength();
+  if (!slot || !length || length > slot->size) {
+    return send_page("This file is empty or exceeds the available application slot.", "e", typed, false);
   }
-  bool seen = up.seen;
-  up.seen = false;
-  if (seen ? !up.codeOk : !code_ok()) {
-    send_page("That code doesn't match the one on the panel's screen. Nothing was changed.", "e", "", false);
-    return;
+  server->allowUpload();
+  FwCheck check;
+  FwVerdict verdict = FwVerdict::Ok;
+  String error;
+  uint8_t chunk[1024];
+  bool writing = false;
+  while (check.size < length) {
+    int n = server->read(chunk, std::min(sizeof(chunk), length - check.size));
+    if (n <= 0) { error = "Upload interrupted."; break; }
+    lastSave = millis();
+    fw_check_feed(check, chunk, n);
+    if (!writing) {
+      verdict = fw_check_start(check);
+      if (verdict != FwVerdict::Ok) break;
+      if (!Update.begin(length)) { error = Update.errorString(); break; }
+      writing = true;
+      ui_message(MSG_UPDATING_TITLE, MSG_UPDATING_BODY);
+    }
+    if (Update.write(chunk, n) != (size_t)n) { error = Update.errorString(); break; }
+    display_loop();
   }
-  String msg;
-  if (seen && up.error.length()) {
-    msg = "The update failed: " + esc(up.error) + ".";
-  } else {
-    FwVerdict v = !seen ? FwVerdict::Empty
-                  : up.verdict != FwVerdict::Ok ? up.verdict
-                                                : fw_check_end(up.check, thisBoard, up.room);
-    char why[240];
-    fw_refusal(why, sizeof(why), v, up.check, thisBoard);
-    msg = why[0] ? why : "The update didn't go through.";
+  if (writing && error.isEmpty()) {
+    verdict = fw_check_end(check, thisBoard, slot->size);
+    if (verdict == FwVerdict::Ok) {
+      if (Update.end()) {
+        send_page("Updated. The panel will restart.", "ok", "", false, true);
+        result = WebSetup::Updated;
+        finished = true;
+        return;
+      }
+      error = Update.errorString();
+    }
   }
-  Serial.printf("[setup] firmware upload refused: %s\n", msg.c_str());
-  send_page(msg + " The panel keeps running the firmware it had.", "e", typed, false);
+  if (writing) Update.abort();
+  show_screen();
+  char why[240] = {};
+  fw_refusal(why, sizeof(why), verdict, check, thisBoard);
+  send_page(error.length() ? esc(error) : String(why), "e", typed, false);
 }
 
 WebSetup setup_web_run(bool firstTime)
@@ -507,50 +477,43 @@ WebSetup setup_web_run(bool firstTime)
   choiceCount = 0;
   snprintf(thisBoard, sizeof(thisBoard), "%.*s", (int)(sizeof(BOARD_STAMP) - sizeof(FW_BOARD_MARKER) - 1),
            BOARD_STAMP + sizeof(FW_BOARD_MARKER) - 1);
-  up.seen = up.writing = up.done = false;
-
-  WebServer web(80);
+  draft = settings;
+  offlineSave = false;
+  SettingsHttp web;
   server = &web;
-  web.on("/", HTTP_GET, handle_root);
-  web.on("/save", HTTP_POST, handle_save);
-  web.on("/finish", HTTP_POST, handle_finish);
-  web.on("/check", HTTP_POST, handle_check);
-  web.on("/wifi", HTTP_POST, handle_wifi);
-  static const char *wanted[] = {"Content-Type"};
-  web.collectHeaders(wanted, 1);
-  web.on("/update", HTTP_POST, handle_update, handle_update_file);
-  web.onNotFound([]() {
-    server->sendHeader("Location", "/");
-    server->send(303);
-  });
-  web.begin();
   show_screen();
+  if (!web.begin(handle_root, handle_save, handle_finish, handle_check, handle_wifi, handle_update)) {
+    web.stop();
+    server = nullptr;
+    ui_message("Settings unavailable", "Restart the panel to retry.");
+    delay(2000);
+    if (first) ESP.restart();
+    return WebSetup::Idle;
+  }
   Serial.printf("[setup] settings page at http://%s\n", WiFi.localIP().toString().c_str());
 
   IPAddress shown = WiFi.localIP();
-  while (!finished) {
-    web.handleClient();
-    display_loop(); // the buttons on the panel's screen
-    int pressed = ui_message_pressed();
-    if (pressed == 1) break; // Cancel: as if nobody had saved
-    if (pressed == 2) {
-      result = WebSetup::Calibrate;
-      break;
+  for (;;) {
+    web.lock();
+    if (!finished) {
+      display_loop();
+      int pressed = ui_message_pressed();
+      if (pressed == 2) result = WebSetup::Calibrate;
+      finished = pressed == 1 || pressed == 2 || (!first && millis() - lastSave > IDLE_MS);
+      if (!finished && WiFi.localIP() != shown) {
+        shown = WiFi.localIP();
+        show_screen();
+      }
     }
-    if (!first && millis() - lastSave > IDLE_MS) break;
-    if (WiFi.localIP() != shown) { // a new lease: the address on the screen was wrong
-      shown = WiFi.localIP();
-      show_screen();
-    }
-    delay(2);
-  }
-  // Let the last answer reach the browser before the server goes.
-  for (uint32_t t = millis(); millis() - t < 300;) {
-    web.handleClient();
+    bool exitSetup = finished;
+    if (exitSetup) web.closeRequests();
+    web.unlock();
+    if (exitSetup) break;
     delay(2);
   }
   web.stop();
   server = nullptr;
+  draft = Settings();
   memset(code, 0, sizeof(code));
 
   if (result == WebSetup::ChangeWifi) {

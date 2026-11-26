@@ -12,7 +12,7 @@
 
 static const uint32_t NOTICE_MS = 2500, NOTICE_BAD_MS = 6000; // a failure stays to be read
 static const uint32_t PRESS_FREEZE_MS = 5000; // a finger this long is not mid-hold any more
-static const uint32_t PENDING_GIVE_UP_MS = 12000; // longer than any request can take
+static const uint32_t PENDING_NOTICE_MS = 12000; // longer than any request can take
 static const uint32_t DIM_AFTER_MS = 60000;
 static const uint8_t BRIGHT = 100, DIM = 35; // backlight, percent
 static const int HEADER_H = 40, BUTTON_H = 56, QUEUE_ROWS = 1 + MAX_MORE;
@@ -41,6 +41,9 @@ static int actionCount = 0;
 static uint32_t shownSeq = UINT32_MAX, shownToast = 0, pressedSince = 0;
 static View view = View::Offline;
 static ViewOptions options;
+static Snapshot rendered; // exactly the state used to label the visible controls
+static const Snapshot *latest = nullptr;
+static uint32_t nextRequest = 0;
 static int shownArchive = 0, shownRun = 0; // the print the outcome question is about
 static int errorShown = 0;                 // which of the errors is on screen
 
@@ -51,7 +54,8 @@ static struct {
   int arg = 0;
   uint32_t since = 0;
   bool answered = false;
-  uint32_t seqAtAnswer = 0;
+  uint32_t request = 0;
+  bool delayed = false;
 } pend;
 
 static bool dimmed = false;
@@ -222,7 +226,7 @@ static void set_fill(UiButton &b, uint32_t elapsed)
 {
   if (!b.fill) return;
   if (elapsed > HOLD_MS) elapsed = HOLD_MS;
-  int w = (int)((int64_t)lv_obj_get_width(b.btn) * elapsed / HOLD_MS);
+  int w = (int)((int64_t)lv_obj_get_width(lv_obj_get_parent(b.fill)) * elapsed / HOLD_MS);
   lv_obj_set_width(b.fill, w);
   show(b.fill, w > 0);
   // Stop's light red words would vanish against its red fill.
@@ -288,12 +292,12 @@ void ui_button_create(UiButton &b, lv_obj_t *parent, void (*fire)(UiButton &), i
   style_button(b);
 }
 
-void ui_button_set(UiButton &b, const char *text, Kind kind, bool hold, Icon icon, int id)
+void ui_button_set(UiButton &b, const char *text, Kind kind, bool hold, Icon icon, uint64_t id)
 {
   b.kind = kind;
   b.hold = hold;
+  if (b.id != id) b.swallowed = true;
   b.id = id;
-  b.fired = false;
   if (hold && !b.fill) {
     // What a hold fills with. Rounded like the button, not clipped to it: clipping to rounded
     // corners makes LVGL draw the button into a buffer of its own, which the panel has no
@@ -346,7 +350,7 @@ static void draw_notice(const char *text, bool bad)
   show(noticeBox, true);
 }
 
-static void show_notice(const char *text, bool bad)
+void ui_notice(const char *text, bool bad)
 {
   draw_notice(text, bad);
   noticeUntil = (millis() + (bad ? NOTICE_BAD_MS : NOTICE_MS)) | 1;
@@ -365,17 +369,27 @@ static void hide_notice()
 void ui_send(Command c, int arg, int arg2)
 {
   if (pend.active) return;
-  if (!bambuddy_send(c, arg, arg2)) {
-    show_notice("Busy, try again", true);
+  Job job = {c, arg, arg2};
+  CommandTarget target = command_target(job, rendered);
+  if (!target.printer || !latest || !(target == command_target(job, *latest))) {
+    ui_notice("Status changed. Check the screen.", true);
+    return;
+  }
+  if (++nextRequest == 0) ++nextRequest;
+  if (!bambuddy_send(c, arg, arg2, target, nextRequest)) {
+    ui_notice("Busy, try again", true);
     return;
   }
   pend.active = true;
+  pend.request = nextRequest;
+  pend.delayed = false;
   pend.cmd = c;
   pend.arg = arg;
   pend.since = millis();
   pend.answered = false;
 }
 
+bool ui_can_write() { return latest && latest->reachable && latest->httpCode == 200 && !pend.active; }
 bool ui_busy() { return pend.active; }
 bool ui_pending(Command c, int arg) { return pend.active && pend.cmd == c && pend.arg == arg; }
 bool ui_answered() { return pend.active && pend.answered; }
@@ -390,7 +404,7 @@ void ui_open_settings()
 
 // ---------------------------------------------------------------- status screen buttons
 
-static int action_id(const Action &a) { return ((int)a.cmd + 1) * 1000003 + a.arg * 31 + a.arg2; }
+static uint64_t action_id(const Action &a) { return (uint64_t(a.cmd) << 32) | uint32_t(a.arg); }
 
 static void draw_buttons()
 {
@@ -407,7 +421,7 @@ static void draw_buttons()
     bool under_way = ui_pending(a.cmd, a.arg);
     ui_button_set(btn[i], under_way ? a.pending : a.text, a.kind, a.hold, under_way ? Icon::None : a.icon, action_id(a));
     // Nothing can be pressed while a command is under way, or while Bambuddy isn't answering.
-    ui_button_enable(btn[i], !ui_busy() && !lostShown);
+    ui_button_enable(btn[i], ui_can_write() && command_target({a.cmd, a.arg, a.arg2}, rendered).printer);
   }
 }
 
@@ -425,7 +439,7 @@ enum Answer { GOOD = 1, BAD = 2, SKIP = 3 };
 
 static void draw_verdict_buttons()
 {
-  for (UiButton *b : {&btnGood, &btnBad, &btnSkip}) ui_button_enable(*b, !ui_busy() && !lostShown);
+  for (UiButton *b : {&btnGood, &btnBad, &btnSkip}) ui_button_enable(*b, ui_can_write());
 }
 
 static void verdict_fire(UiButton &b)
@@ -1083,6 +1097,7 @@ static bool wants_someone()
 
 void ui_update(const Snapshot &s)
 {
+  latest = &s;
   // The maintenance screen gives way to the status screen when left alone.
   if (tasks_idle_timeout()) shownSeq = UINT32_MAX;
   if (filament_tick()) shownSeq = UINT32_MAX; // closed itself, or its spool list has come
@@ -1091,8 +1106,16 @@ void ui_update(const Snapshot &s)
   // stays far longer than any hold is a stuck or noisy touch, and must not freeze the screen.
   bool pressed = lv_indev_get_state(lv_indev_get_next(nullptr)) == LV_INDEV_STATE_PRESSED;
   if (!pressed) pressedSince = 0;
-  else if (!pressedSince) pressedSince = millis() | 1;
+  else if (!pressedSince) pressedSince = millis();
   bool holding = pressed && millis() - pressedSince < PRESS_FREEZE_MS;
+
+  if (holding && (s.reachable != rendered.reachable || s.httpCode != rendered.httpCode || strcmp(s.state, rendered.state) ||
+                  s.runningId != rendered.runningId || s.fileIdentity != rendered.fileIdentity ||
+                  s.currentArchive != rendered.currentArchive || s.nextId != rendered.nextId ||
+                  s.runId != rendered.runId || s.archiveId != rendered.archiveId)) {
+    lv_indev_wait_release(lv_indev_get_next(nullptr));
+    holding = false;
+  }
 
   // A command's answer: say it, and let go of "under way" once Bambuddy has been read again
   // (or at once when it failed: nothing is going to change).
@@ -1102,18 +1125,18 @@ void ui_update(const Snapshot &s)
     // ui_filament.cpp): a band there would lie over Back and the page buttons. A failure is said in the band wherever it happens.
     bool inRow = !s.toastBad && pend.active &&
                  ((pend.cmd == Command::PerformTask && tasks_showing()) ||
-                  ((pend.cmd == Command::AssignSpool || pend.cmd == Command::UnassignSpool) && filament_showing()));
-    if (s.toast[0] && !inRow) show_notice(s.toast, s.toastBad);
-    if (pend.active) {
-      if (s.toastBad) pend.active = false;
-      else {
-        pend.answered = true;
-        pend.seqAtAnswer = s.seq;
-      }
+                  ((pend.cmd == Command::AssignSpool || pend.cmd == Command::UnassignSpool) && filament_showing() && !strstr(s.toast, "pending")));
+    if (s.toast[0] && !inRow) ui_notice(s.toast, s.toastBad);
+    if (pend.active && s.answeredRequest == pend.request) {
+      pend.answered = !s.toastBad;
       ui_redraw_soon();
     }
   }
-  if (pend.active && ((pend.answered && s.seq != pend.seqAtAnswer) || millis() - pend.since > PENDING_GIVE_UP_MS)) {
+  if (pend.active && !pend.delayed && millis() - pend.since > PENDING_NOTICE_MS) {
+    pend.delayed = true;
+    ui_notice("Waiting for a fresh status", true);
+  }
+  if (pend.active && s.settledRequest == pend.request) {
     pend.active = false;
     ui_redraw_soon();
   }
@@ -1134,6 +1157,8 @@ void ui_update(const Snapshot &s)
   }
 
   if (s.seq != shownSeq && s.seq != 0 && !holding) {
+    if (pressed) lv_indev_wait_release(lv_indev_get_next(nullptr));
+    rendered = s;
     view = pick_view(s, options);
     draw(s);
     shownSeq = s.seq; // after draw: a message screen resets it
