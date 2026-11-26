@@ -15,9 +15,6 @@ bool command_request(const Job &job, int printerId, Request &out)
   case Command::ClearPlate:  snprintf(out.path, sizeof(out.path), "/api/v1/printers/%d/clear-plate", p); break;
   case Command::ClearErrors: snprintf(out.path, sizeof(out.path), "/api/v1/printers/%d/hms/clear", p); break;
   case Command::ResumeQueue: snprintf(out.path, sizeof(out.path), "/api/v1/queue/printer/%d/resume", p); break;
-  case Command::SetLight:
-    snprintf(out.path, sizeof(out.path), "/api/v1/printers/%d/chamber-light?on=%s", p, job.arg ? "true" : "false");
-    break;
   case Command::StartNext:
     if (job.arg <= 0) return false;
     snprintf(out.path, sizeof(out.path), "/api/v1/queue/%d/start", job.arg);
@@ -40,8 +37,37 @@ bool command_request(const Job &job, int printerId, Request &out)
     snprintf(out.path, sizeof(out.path), "/api/v1/maintenance/items/%d/perform", job.arg);
     snprintf(out.body, sizeof(out.body), "{}");
     break;
+  case Command::AssignSpool:
+    if (job.arg <= 0) return false;
+    // "move": the spool leaves any other slot it was in; it is the one in the person's hand.
+    snprintf(out.path, sizeof(out.path), "/api/v1/inventory/assignments");
+    snprintf(out.body, sizeof(out.body), "{\"spool_id\":%d,\"printer_id\":%d,\"ams_id\":%d,\"tray_id\":%d,\"move\":true}",
+             job.arg, p, slot_ams(job.arg2), slot_tray(job.arg2));
+    break;
+  case Command::UnassignSpool:
+    out.method = "DELETE";
+    snprintf(out.path, sizeof(out.path), "/api/v1/inventory/assignments/%d/%d/%d", p, slot_ams(job.arg2),
+             slot_tray(job.arg2));
+    break;
+  case Command::LoadSpools: // for the background task, not for Bambuddy
+    return false;
   }
   return true;
+}
+
+// The API key permission a command needs, as Bambuddy's settings page names it.
+static const char *needed_permission(const Job &job)
+{
+  switch (job.cmd) {
+  case Command::ResumeQueue:
+  case Command::StartNext:     return "Manage Queue";
+  case Command::VerdictGood:
+  case Command::VerdictReject: return "Manage Archives";
+  case Command::PerformTask:   return "Manage Maintenance";
+  case Command::AssignSpool:
+  case Command::UnassignSpool: return "Manage Inventory";
+  default:                     return "Control Printer";
+  }
 }
 
 static const char *done_label(const Job &job)
@@ -53,39 +79,45 @@ static const char *done_label(const Job &job)
   case Command::ClearPlate:    return "Plate cleared";
   case Command::ClearErrors:   return "Errors cleared";
   case Command::ResumeQueue:   return "Queue resumed";
-  case Command::SetLight:      return job.arg ? "Light on" : "Light off";
   case Command::StartNext:     return "Starting";
   case Command::VerdictGood:   return "Marked good";
   case Command::VerdictReject: return "Marked bad";
   case Command::PerformTask:   return "Marked done";
+  case Command::AssignSpool:   return "Spool assigned";
+  case Command::UnassignSpool: return "Spool removed";
+  case Command::LoadSpools:    return "";
   }
   return "Done";
 }
 
-void command_result(const Job &job, int code, char *out, size_t size)
+bool command_result(const Job &job, int code, char *out, size_t size)
 {
-  if (code == 0) snprintf(out, size, "Nothing to send");
-  else if (code >= 200 && code < 300) snprintf(out, size, "%s", done_label(job));
-  else if (code == 401) snprintf(out, size, "API key refused");
-  else if (code == 403) snprintf(out, size, "Not allowed (API key)");
-  else if (code == 404) snprintf(out, size, "Not found in Bambuddy");
-  else if (code == 409 && job.cmd == Command::StartNext) snprintf(out, size, "Filament short; see Bambuddy");
-  else if (code == 400 || code == 409) snprintf(out, size, "Printer not ready (%d)", code);
-  else if (code >= 500) snprintf(out, size, "Bambuddy error (%d)", code);
+  if (code >= 200 && code < 300) {
+    snprintf(out, size, "%s", done_label(job));
+    return true;
+  }
+  if (code == 0) snprintf(out, size, "Nothing to act on");
+  else if (code == 401) snprintf(out, size, "Bambuddy refused the API key");
+  else if (code == 403) snprintf(out, size, "API key lacks %s", needed_permission(job));
+  else if (code == 404) snprintf(out, size, "Bambuddy no longer has it");
+  else if (code == 409 && job.cmd == Command::StartNext) snprintf(out, size, "Not enough filament loaded");
+  else if (code == 400 || code == 409) snprintf(out, size, "The printer isn't ready for that");
+  else if (code >= 500) snprintf(out, size, "Bambuddy had an error (%d)", code);
   else if (code == ERR_NO_WIFI) snprintf(out, size, "WiFi is down");
   else if (code < 0) snprintf(out, size, "No answer from Bambuddy");
-  else snprintf(out, size, "Failed (%d)", code);
+  else snprintf(out, size, "Bambuddy answered %d", code);
+  return false;
 }
 
 void describe_offline(int code, int printerId, char *out, size_t size)
 {
-  static const char *SETTINGS_HINT = "\nHold the screen at start-up to change the settings.";
   switch (code) {
-  case 401: snprintf(out, size, "Bambuddy refused the API key.%s", SETTINGS_HINT); return;
-  case 403: snprintf(out, size, "The API key may not read printer %d.%s", printerId, SETTINGS_HINT); return;
-  case 404: snprintf(out, size, "Bambuddy has no printer with id %d.%s", printerId, SETTINGS_HINT); return;
-  case ERR_HTTPS: snprintf(out, size, "Use an http:// address; https isn't supported.%s", SETTINGS_HINT); return;
-  case ERR_BAD_URL: snprintf(out, size, "The Bambuddy address isn't valid.%s", SETTINGS_HINT); return;
+  case 401: snprintf(out, size, "Bambuddy refused the API key. It may have been deleted or changed."); return;
+  // Bambuddy answers 404, not 403, for a printer the key is not limited to.
+  case 403: snprintf(out, size, "The API key lacks Read Status, or its owner may not see printers."); return;
+  case 404: snprintf(out, size, "No printer with id %d, or the API key is limited to others.", printerId); return;
+  case ERR_HTTPS: snprintf(out, size, "Use an http:// address; https isn't supported."); return;
+  case ERR_BAD_URL: snprintf(out, size, "The Bambuddy address isn't valid."); return;
   case ERR_NO_WIFI: snprintf(out, size, "WiFi is down. Retrying..."); return;
   case ERR_BAD_JSON: snprintf(out, size, "Bambuddy's answer was cut off. Retrying..."); return;
   case -11: snprintf(out, size, "Bambuddy didn't answer in time. Retrying..."); return;
@@ -119,6 +151,8 @@ void normalize_url(char *url, size_t size)
     snprintf(tmp, sizeof(tmp), "http://%s", url);
     snprintf(url, size, "%s", tmp);
   }
+  // "Http://", as a phone's keyboard starts it: the scheme is matched in lower case.
+  for (char *c = url, *end = strstr(url, "://"); c < end; c++) *c = (char)tolower((unsigned char)*c);
   for (;;) {
     n = strlen(url);
     if (n > 0 && url[n - 1] == '/') url[n - 1] = 0;

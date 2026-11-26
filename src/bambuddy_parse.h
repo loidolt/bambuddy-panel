@@ -10,13 +10,16 @@ void queue_filter(JsonDocument &filter);
 void last_print_filter(JsonDocument &filter);
 void tasks_filter(JsonDocument &filter);
 void settings_filter(JsonDocument &filter);
+void assignments_filter(JsonDocument &filter);
 
 void parse_status(JsonDocument &doc, Snapshot &s); // GET /printers/{id}/status
-// GET /queue/?status=pending,skipped&printer_id={id}
+// GET /queue/?status=pending,skipped,printing&printer_id={id}
 void parse_queue(JsonDocument &doc, int printerId, Snapshot &s);
 void parse_tasks(JsonDocument &doc, Snapshot &s);  // GET /maintenance/printers/{id}
 void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s); // GET /archives/last-per-printer
 void parse_settings(JsonDocument &doc, Snapshot &s); // GET /settings/
+// GET /inventory/assignments?printer_id={id}
+void parse_assignments(JsonDocument &doc, int printerId, Snapshot &s);
 
 // The message Bambuddy's scheduler puts on queue items it skips after a failed print; the
 // "resume queue" request puts exactly these back.

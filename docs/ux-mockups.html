@@ -1,0 +1,126 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bambuddy Panel: proposed screens</title>
+<style>
+  body{font:14px system-ui,sans-serif;margin:1.5em;background:#e9e9e6;color:#222}
+  h2{margin:2em 0 .3em;border-bottom:1px solid #bbb;padding-bottom:.2em}
+  p.note{max-width:60em;color:#444}
+  .pair{display:flex;gap:24px;flex-wrap:wrap;margin:.6em 0 1.6em}
+  figure{margin:0}figcaption{font-size:12px;color:#555;margin-top:4px;max-width:640px}
+  .scr{--w:320;position:relative;width:calc(var(--w)*1px);height:240px;background:#101418;color:#ECEFF1;
+       font-family:Montserrat,"Avenir Next","Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.25;
+       overflow:hidden;zoom:2;display:flex;flex-direction:column}
+  .scr.wide{--w:360}
+  .hdr{height:40px;display:flex;align-items:center;gap:6px;padding:0 10px;flex:none}
+  .name{font-size:20px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip{height:24px;line-height:24px;padding:0 10px;border-radius:6px;white-space:nowrap}
+  .c-neutral{background:#1A62C2}.c-caution{background:#9C5700}.c-danger{background:#C62828}
+  .c-go{background:#2A722E}.c-quiet{background:#455A64}
+  .wr{width:42px;height:30px;border-radius:6px;background:#263238;display:flex;align-items:center;justify-content:center;gap:3px}
+  .wr svg{width:16px;height:16px;fill:#ECEFF1}.wr.due{background:#9C5700}.wr.soon{background:none;box-shadow:inset 0 0 0 2px #9C5700}
+  .body{flex:1;padding:0 10px;display:flex;flex-direction:column;gap:6px;min-height:0}.body>*{flex:none}
+  .dim{color:#90A4AE}.bad{color:#FF8A80}.warn{color:#FFB74D}.ok{color:#81C784}
+  .one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .h28{font-size:28px;line-height:1.15}.h20{font-size:20px;line-height:1.2}
+  .bar{height:12px;border-radius:6px;background:#0F2A47;overflow:hidden;flex:none}.bar i{display:block;height:100%;background:#2196F3;border-radius:6px}
+  .row{display:flex;align-items:baseline;gap:10px}.row .r{margin-left:auto}
+  .btns{height:56px;margin:0 8px 6px;display:flex;gap:8px;flex:none}
+  .b{flex:1;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:20px;position:relative;overflow:hidden;text-align:center}
+  .b.go{background:#2A722E}.b.neutral{background:#1A62C2}.b.quiet{background:#263238;font-size:14px}
+  .b.stop{background:#101418;box-shadow:inset 0 0 0 2px #C62828;color:#FF8A80}
+  .b.small{font-size:14px;line-height:1.15}.b.off{opacity:.4}.b.pend{opacity:.6}
+  .b .fill{position:absolute;left:0;top:0;bottom:0;background:#C62828;opacity:.85}.b.go .fill{background:#4CAF50;opacity:.6}
+  .b span{position:relative}
+  .errbox{background:#1B2228;border-left:4px solid #C62828;border-radius:6px;padding:6px 8px;display:flex;gap:8px;color:#FF8A80}
+  .errbox .n{margin-left:auto;color:#90A4AE;white-space:nowrap}
+  .notice{position:absolute;left:0;right:0;top:0;height:40px;display:flex;align-items:center;gap:8px;padding:0 10px;background:#263238;border-bottom:1px solid #455A64}
+  .notice.bad{background:#C62828;color:#fff;border:0}
+  .q li{list-style:none;display:flex;gap:8px}.q{margin:0;padding:0;display:flex;flex-direction:column;gap:4px}.q .t{margin-left:auto;color:#90A4AE;white-space:nowrap}
+  .q .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qr{width:104px;height:104px;background:#fff;border-radius:4px;flex:none;
+      background-image:conic-gradient(#000 25%,#fff 0 50%,#000 0 75%,#fff 0);background-size:8px 8px;border:6px solid #fff;box-sizing:border-box;position:relative}
+  .qr::after{content:"QR";position:absolute;inset:34px;background:#fff;color:#000;font:700 14px system-ui;display:flex;align-items:center;justify-content:center}
+  .msg{flex:1;display:flex;gap:12px;padding:0 10px;align-items:center}
+  .mrow{height:46px;margin:0 8px 2px;background:#1B2228;border-radius:6px;display:flex;align-items:center;border-left:4px solid #455A64;flex:none;overflow:hidden}
+  .mrow.d{border-color:#C62828}.mrow.s{border-color:#9C5700}
+  .mrow .tx{flex:1;padding:0 8px;min-width:0}.mrow .bt{width:96px;height:46px;display:flex;align-items:center;justify-content:center;background:#263238;border-radius:6px}
+  .mrow .bt.go{background:#2A722E}
+  .mh{height:46px;margin:0 8px 2px;display:flex;gap:6px;align-items:center;flex:none}
+  .mh .k{height:46px;min-width:46px;padding:0 10px;border-radius:6px;background:#263238;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+  .spin{width:28px;height:28px;border:4px solid #263238;border-top-color:#2196F3;border-radius:50%}
+  .dimmed{opacity:.45}
+</style>
+<h1>Bambuddy Panel: proposed screens</h1>
+<p class="note">Left: 320x240. Right: 480x320, which lays out on a 360x240 grid. Both shown at 2x. Drawn in a
+browser to settle arrangement and wording; the panel's own rendering, font and exact spacing will differ a
+little. The rules behind these are in <a href="ux-design.md">ux-design.md</a>, the problems they answer in
+<a href="ux-findings.md">ux-findings.md</a>.</p>
+<div id="out"></div>
+<script>
+const W='<svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>';
+const wr=(k,n)=>`<div class="wr ${k||''}">${W}${n?`<span>${n}</span>`:''}</div>`;
+const hdr=(name,chip,cls,w)=>`<div class="hdr"><div class="name">${name}</div>${w===undefined?wr('due',2):w}<div class="chip c-${cls}">${chip}</div></div>`;
+const btns=(...b)=>`<div class="btns">${b.join('')}</div>`;
+const b=(cls,label,extra='')=>`<div class="b ${cls}">${extra}<span>${label}</span></div>`;
+const PAUSE=b('neutral','❚❚ Pause'), STOP=b('stop','■ Hold to stop'), RESUME=b('go','▶ Resume');
+const bar=p=>`<div class="bar"><i style="width:${p}%"></i></div>`;
+const temps='<div class="dim">Nozzle 220°&nbsp;&nbsp; Bed 60°&nbsp;&nbsp; Chamber 38°</div>';
+const prog=`<div class="one">Fidget_gears_plate_2</div>${bar(42)}<div class="row"><span class="h28">42%</span><span class="h20">1h 23m left</span><span class="dim r">Layer 86/203</span></div>`;
+const err=(t,n)=>`<div class="errbox"><span>⚠</span><span>${t}</span>${n?`<span class="n">${n}</span>`:''}</div>`;
+const q=items=>`<ul class="q">${items.map(([n,t,c])=>`<li><span class="nm ${c||''}">${n}</span><span class="t">${t}</span></li>`).join('')}</ul>`;
+
+const screens=[
+['Printing','Two buttons, both large. Pause is the filled one; Stop is an outline with a red hold fill. The Next line stays on one line.',
+ hdr('X1C','Printing','neutral')+`<div class="body">${prog}${temps}<div class="dim one">Next: Articulated_dragon_plate_1 (3h 12m), +2 more</div></div>`+btns(PAUSE,STOP)],
+['Printing, long names','The chip is as wide as its word, so the name gets the room.',
+ hdr('Workshop H2D left','Printing','neutral')+`<div class="body"><div class="one">A_very_long_job_name_that_will_not_fit_on_one_line_plate_12</div>${bar(99)}<div class="row"><span class="h28">99%</span><span class="h20">26h 05m left</span><span class="dim r">Layer 1234/1240</span></div>${temps}<div class="dim one">Next: Another_extremely_long_file_name_for_the_next_print_plate_3 (14h)</div></div>`+btns(PAUSE,STOP)],
+['Preparing','The stage is the headline. No 0%, no layer count.',
+ hdr('X1C','Preparing','neutral')+`<div class="body"><div class="one">Fidget_gears_plate_2</div><div class="h28">Auto bed leveling</div><div class="dim">About 2h 05m once it starts</div><div class="dim one">Next: Articulated_dragon_plate_1 (3h 12m), +2 more</div></div>`+btns(PAUSE,STOP)],
+['Holding Stop','The fill crosses the button in 1.5 s. The label does not change. Letting go drains it.',
+ hdr('X1C','Printing','neutral')+`<div class="body">${prog}${temps}</div>`+btns(PAUSE,b('stop','■ Hold to stop','<i class="fill" style="width:60%"></i>'))],
+['After the hold: pending','From the moment the hold completes until Bambuddy answers. Nothing else can be pressed.',
+ hdr('X1C','Printing','neutral')+`<div class="body">${prog}${temps}</div>`+btns(b('neutral off','❚❚ Pause'),b('stop pend','Stopping...'))],
+['Printing with an error','A box, not just red text, and a count when there are more. A tap shows the next one.',
+ hdr('X1C','Printing','neutral')+`<div class="body">${prog}${err('AMS1 slot 2 filament has run out. Please insert a new filament.','1 of 3')}</div>`+btns(PAUSE,STOP)],
+['Paused','Says that it is paused and where; the error, when there is one, says why.',
+ hdr('X1C','Paused','caution')+`<div class="body"><div class="one">Fidget_gears_plate_2</div>${bar(42)}<div class="h28">Paused at 42%</div>${err('AMS1 slot 2 filament has run out. Please insert a new filament.')}</div>`+btns(RESUME,STOP)],
+['Outcome question','"Skip" instead of "Later": it does not come back on the panel.',
+ hdr('X1C','Finished','go')+`<div class="body"><div class="one">Fidget_gears_plate_2</div><div class="h28">How did it print?</div></div><div class="btns" style="height:104px">${b('go','<span style="font-size:44px">👍</span>')}${b('stop','<span style="font-size:44px">👎</span>')}<div class="b quiet" style="flex:.5">Skip</div></div>`],
+['Plate clear, next job starts by itself','The button says what holding it does. The next two jobs are listed; three fit where there is no job line.',
+ hdr('X1C','Finished','go')+`<div class="body"><div class="one dim">Fidget_gears_plate_2</div><div class="h28 ok">Print finished</div><div class="dim">Starts when the plate is clear:</div>${q([['Articulated_dragon_plate_1','3h 12m'],['Cable_clips_x24','47m','dim']])}</div>`+btns(b('go','✓ Hold: plate clear, start next'))],
+['Plate clear after a failure','Failed is red in the chip and the headline; the button is the same green hold.',
+ hdr('X1C','Failed','danger')+`<div class="body"><div class="one dim">Fidget_gears_plate_2</div><div class="h28 bad">Failed at 37%</div><div class="dim">Nothing else queued</div></div>`+btns(b('go','✓ Hold when plate is clear'))],
+['Ready to start','The job is the headline: it is what to check before holding the button.',
+ hdr('X1C','Ready','go')+`<div class="body"><div class="h20" style="margin-top:6px">Articulated_dragon_ plate_1</div><div class="dim">3h 12m &nbsp;·&nbsp; queued by anna</div><div class="warn">Waiting for filament: PETG black</div></div>`+btns(b('go','▶ Hold to start'))],
+['Idle, jobs waiting','Bambuddy\'s own reason, then what is queued. No button, because there is nothing to do here.',
+ hdr('X1C','Idle','quiet',wr())+`<div class="body"><div class="h28 dim">Waiting</div><div class="warn">For any X1C: Bambuddy picks the printer</div>${q([['Cable_clips_x24','47m'],['Spool_holder_v3','5h 40m','dim']])}</div>`],
+['Idle, nothing queued','',
+ hdr('X1C','Idle','quiet',wr())+`<div class="body"><div class="h28 dim" style="margin-top:40px">Nothing queued</div></div>`],
+['Queue held','Its own chip. Resuming can start a print, so it is a hold.',
+ hdr('X1C','Queue held','caution')+`<div class="body"><div class="h28 warn" style="margin-top:14px">2 jobs held</div><div class="dim">after Fidget_gears_plate_2 failed</div>${q([['Articulated_dragon_plate_1','3h 12m'],['Cable_clips_x24','47m','dim']])}</div>`+btns(b('neutral','▶ Hold to resume queue'))],
+['Error','The error is the headline. Clear error is first; the held queue is second and a hold.',
+ hdr('X1C','Error','danger')+`<div class="body"><div class="one dim">Fidget_gears_plate_2</div>${err('<span class="h20">The nozzle is clogged. Please check the hotend and extruder.</span>','1 of 2')}</div>`+btns(b('neutral','Clear error'),b('quiet small','Hold to<br>resume queue'))],
+['Printer offline','Says what is known and what it might be. (Power on: later effort.)',
+ hdr('X1C','Offline','quiet')+`<div class="body"><div class="h28 dim" style="margin-top:30px">Printer offline</div><div class="dim">Bambuddy can't reach it. Switched off?</div></div>`],
+['Bambuddy not answering','The last status stays, dimmed, under a band. After five minutes: the screen below.',
+ `<div class="dimmed">`+hdr('X1C','Printing','neutral')+`<div class="body">${prog}${temps}</div>`+btns(PAUSE,STOP)+`</div><div class="notice bad">⚠ No answer from Bambuddy for 40 s</div>`],
+['Settings wrong','For a refused key, an unknown printer or an address that can\'t work. A button leads to the fix.',
+ `<div class="hdr"><div class="name">Check settings</div></div><div class="body"><div class="h20" style="margin-top:20px">Bambuddy refused the API key.</div><div class="dim">The key may have been deleted or changed in Bambuddy.</div></div>`+btns(b('neutral','⚙ Hold to open settings'))],
+['A command failed','A red band over the header for 6 s; a tap dismisses it. Success is a plain band for 2.5 s.',
+ hdr('X1C','Ready','go')+`<div class="body"><div class="h20" style="margin-top:6px">Articulated_dragon_ plate_1</div><div class="dim">3h 12m</div></div>`+btns(b('go','▶ Hold to start'))+`<div class="notice bad">⚠ Not allowed: the API key lacks Manage Queue</div>`],
+['Maintenance','Rows and buttons 46 tall. Paging both ways. A gear opens the panel\'s settings.',
+ `<div class="mh"><div class="k">‹ Back</div><div style="flex:1;text-align:center">Maintenance</div><div class="k">⚙</div><div class="k">‹</div><span class="dim">1/3</span><div class="k">›</div></div>`+
+ [['d','Clean Build Plate','Overdue by 3 print hours','bad',1],['s','Lubricate Linear Rails','Due in 8 print hours','warn',1],['','Replace Carbon Filter','Due in 21 days','dim',0],['','Clean Carbon Rods','Due in 43 print hours','dim',0]]
+ .map(([k,n,d,c,g])=>`<div class="mrow ${k}"><div class="tx"><div class="one">${n}</div><div class="one ${c}">${d}</div></div><div class="bt ${g?'go':''}">Mark done</div></div>`).join('')],
+['Setup: join the panel\'s network','A QR code joins it; name and password are large for typing by hand.',
+ `<div class="hdr"><div class="name">WiFi setup &nbsp;<span class="dim" style="font-size:14px">step 1 of 2</span></div></div><div class="msg"><div class="qr"></div><div><div class="dim">Scan, or join</div><div class="h20">BambuddyPanel-Setup</div><div class="dim" style="margin-top:6px">password</div><div class="h20">k3mw-9xbq-7hfe</div><div class="dim" style="margin-top:6px">then choose your WiFi</div></div></div>`],
+['Setup: open the settings page','The QR code opens the page with the code filled in. Cancel goes back to normal running.',
+ `<div class="hdr"><div class="name">Settings</div></div><div class="msg" style="align-items:flex-start;padding-top:4px"><div class="qr"></div><div><div class="dim">Scan, or open</div><div class="h20">192.168.178.123</div><div class="dim" style="margin-top:6px">code</div><div class="h28">abcd-efgh</div></div></div>`+btns(b('quiet','Cancel'),b('quiet','Calibrate touch'))],
+['Waiting','A spinner wherever the panel is waiting for something.',
+ `<div class="hdr"><div class="name">Connecting</div></div><div class="msg" style="justify-content:center;flex-direction:column"><div class="spin"></div><div class="dim">Asking Bambuddy at 192.168.1.50...</div></div>`],
+];
+const out=document.getElementById('out');
+for(const [title,cap,html] of screens){
+  out.insertAdjacentHTML('beforeend',`<h2>${title}</h2><div class="pair"><figure><div class="scr">${html}</div><figcaption>${cap}</figcaption></figure><figure><div class="scr wide">${html}</div></figure></div>`);
+}
+</script>

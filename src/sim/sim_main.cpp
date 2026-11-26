@@ -3,7 +3,10 @@
 //   program                 interactive, made-up states (Left/Right to switch, Q to quit)
 //   program --live          interactive, read-only status from a real Bambuddy
 //                           (BAMBUDDY_URL, BAMBUDDY_KEY, BAMBUDDY_PRINTER in the environment)
-//   program --shots <dir>   no window; writes one .bmp per made-up state
+//   program --shots <dir>   no window; writes a .bmp of every screen the panel can show, the
+//                           same with the touch targets framed (targets/), and checks.txt
+//   program --web <dir>     writes the settings web page as the panel would serve it, in each
+//                           of its states, as .html files
 //   --size <W>x<H>          with any of the above: another screen than 320x240, e.g. 480x320
 //
 // Buttons work with the mouse. Commands change the made-up state and print the request the
@@ -19,14 +22,19 @@
 
 #include <chrono>
 #include <cctype>
+#include <sys/stat.h>
 #include <string>
 #include <vector>
 
 #include "bambuddy_api.h"
 #include "bambuddy_parse.h"
+#include "checks.h"
 #include "display.h"
+#include "messages.h"
 #include "poller.h"
 #include "scenarios.h"
+#include "setup_page.h"
+#include "spools.h"
 #include "ui.h"
 
 static Snapshot cur;
@@ -36,11 +44,23 @@ static bool ledR, ledG, ledB;
 
 // ---------------------------------------------------------------- what the panel code calls
 
+// For the picture of a dimmed panel: when set, the clock jumps a minute ahead once that many
+// milliseconds have passed without a touch, so the screenshots needn't wait it out.
+static int restAfterMs = 0;
+static uint32_t skipped = 0, quietSince = 0;
+static bool fingerDown = false; // a pretend finger, for screenshots of pressed buttons
+
 uint32_t millis()
 {
   using namespace std::chrono;
   static const auto start = steady_clock::now();
-  return (uint32_t)duration_cast<milliseconds>(steady_clock::now() - start).count();
+  uint32_t real = (uint32_t)duration_cast<milliseconds>(steady_clock::now() - start).count();
+  if (fingerDown || !restAfterMs) quietSince = real;
+  else if (real - quietSince > (uint32_t)restAfterMs) {
+    skipped += 61000;
+    quietSince = real;
+  }
+  return real + skipped;
 }
 
 void display_led(bool r, bool g, bool b)
@@ -50,9 +70,18 @@ void display_led(bool r, bool g, bool b)
   ledB = b;
 }
 
-static void toast(const char *text)
+static int backlight = 100;
+void display_brightness(uint8_t percent) { backlight = percent; }
+
+void panel_restart(bool intoSettings)
+{
+  printf("[sim] the panel would restart%s\n", intoSettings ? " into its settings screen" : "");
+}
+
+static void toast(const char *text, bool bad)
 {
   snprintf(cur.toast, sizeof(cur.toast), "%s", text);
+  cur.toastBad = bad;
   cur.toastSeq++;
 }
 
@@ -65,6 +94,59 @@ static void start_next()
   cur.remainingMin = cur.nextSeconds / 60;
   cur.nextId = 0;
   cur.queued = cur.queued > 0 ? cur.queued - 1 : 0;
+}
+
+// ---------------------------------------------------------------- made-up inventory
+
+static SpoolStore inventory;
+static int spoolsReadyAfterMs = 700; // how long the pretend Bambuddy takes over the list
+static uint32_t spoolsAskedAt = 0;
+static bool spoolsFail = false;      // for the picture of a list that didn't come
+
+static void make_inventory()
+{
+  static const struct {
+    const char *material, *brand;
+  } kinds[] = {{"PLA", "Bambu Lab"}, {"PLA", "Prusament"}, {"PLA", "eSun"},      {"PETG", "Prusament"},
+               {"PETG", "Bambu Lab"}, {"ABS", "Bambu Lab"}, {"TPU", "Polymaker"}, {"PA6-CF", "Polymaker"}};
+  static const struct {
+    const char *name;
+    uint32_t rgb;
+  } colours[] = {{"Jade White", 0xF5F5F0}, {"Galaxy Black", 0x101010}, {"Fire Engine Red", 0xC12E1F},
+                 {"Azure Blue", 0x2F6FDB}, {"Grass Green", 0x1F8A3B},  {"Signal Yellow with a long name", 0xF2C037}};
+  if (!inventory.items) inventory.items = (Spool *)calloc(MAX_SPOOLS, sizeof(Spool));
+  inventory.count = 0;
+  int id = 1;
+  for (const auto &k : kinds)
+    for (const auto &c : colours) {
+      if ((id * 7) % 5 == 0) { // not every brand has every colour
+        id++;
+        continue;
+      }
+      Spool &sp = inventory.items[inventory.count++];
+      sp = Spool();
+      sp.id = id++;
+      snprintf(sp.material, sizeof(sp.material), "%s", k.material);
+      spool_name(sp.name, sizeof(sp.name), k.brand, nullptr, c.name);
+      sp.rgb = c.rgb;
+      sp.remainG = id % 9 == 0 ? -1 : id % 11 == 0 ? 0 : (id * 137) % 1000;
+    }
+  inventory.total = inventory.count;
+}
+
+int bambuddy_spools(const char *material, int offset, Spool *out, int max, int &total, SpoolState &state)
+{
+  state = inventory.state;
+  if (state != SpoolState::Ready) {
+    total = 0;
+    return 0;
+  }
+  return spools_page(inventory, material, offset, out, max, total);
+}
+
+int bambuddy_spool_materials(char out[][SPOOL_MATERIAL], int max)
+{
+  return inventory.state == SpoolState::Ready ? spools_materials(inventory, out, max) : 0;
 }
 
 // Pretends to be Bambuddy: applies the command to the made-up state.
@@ -82,12 +164,33 @@ static void apply(const Job &job)
     if (cur.nextId != 0 && !cur.nextManual) start_next();
     else snprintf(cur.state, sizeof(cur.state), "IDLE");
     break;
-  case Command::SetLight:      cur.light = job.arg != 0; break;
   case Command::ClearErrors:   cur.errorCount = 0; break;
   case Command::ResumeQueue:   cur.queued += cur.held; cur.held = 0; break;
   case Command::StartNext:     start_next(); break;
   case Command::VerdictGood:
   case Command::VerdictReject: cur.verdictPending = false; break;
+  case Command::AssignSpool:
+  case Command::UnassignSpool: {
+    int ams = slot_ams(job.arg2), tray = slot_tray(job.arg2), n = 0;
+    for (int i = 0; i < cur.assignedCount; i++) // out of this slot, and (a move) out of any other
+      if (!(cur.assigned[i].ams == ams && cur.assigned[i].tray == tray) && cur.assigned[i].spoolId != job.arg)
+        cur.assigned[n++] = cur.assigned[i];
+    cur.assignedCount = n;
+    if (job.cmd == Command::AssignSpool && n < MAX_SLOTS) {
+      Assignment &a = cur.assigned[cur.assignedCount++];
+      a = Assignment();
+      a.ams = (uint8_t)ams;
+      a.tray = (uint8_t)tray;
+      a.spoolId = job.arg;
+      for (int i = 0; i < inventory.count; i++)
+        if (inventory.items[i].id == job.arg) {
+          snprintf(a.name, sizeof(a.name), "%s", inventory.items[i].name);
+          a.remainG = inventory.items[i].remainG;
+        }
+    }
+    break;
+  }
+  case Command::LoadSpools: break; // handled where it is sent
   case Command::PerformTask:
     cur.tasksDue = cur.tasksWarn = 0;
     for (int i = 0; i < cur.taskCount; i++) {
@@ -103,22 +206,60 @@ static void apply(const Job &job)
   }
 }
 
+// A command takes Bambuddy a moment, as it does on the panel: the answer comes after
+// `answerAfterMs`, and the made-up state is "read again" a little after that.
+static int answerAfterMs = 500;
+static const int SETTLE_MS = 400;
+static struct {
+  bool waiting = false, settling = false;
+  Job job;
+  uint32_t at = 0;
+} sent;
+
 bool bambuddy_send(Command c, int arg, int arg2)
 {
-  Job job = {c, arg, arg2};
-  Request r;
-  bool any = command_request(job, live ? atoi(getenv("BAMBUDDY_PRINTER")) : 1, r);
-  printf("[sim] would send: %s %s %s\n", any ? r.method : "(nothing)", r.path, r.body);
-  if (live) {
-    toast("Simulator: not sent");
-  } else {
-    if (any) apply(job);
-    char text[sizeof(cur.toast)];
-    command_result(job, any ? 200 : 0, text, sizeof(text));
-    toast(text);
+  if (c == Command::LoadSpools) { // nothing is sent: the list is read again
+    inventory.state = SpoolState::Loading;
+    spoolsAskedAt = millis();
+    return true;
   }
-  cur.seq++;
+  if (sent.waiting) return false;
+  sent.job = {c, arg, arg2};
+  sent.waiting = true;
+  sent.at = millis();
   return true;
+}
+
+// Call often: answers the command that was sent, when its time has come.
+static void bambuddy_tick()
+{
+  if (inventory.state == SpoolState::Loading && millis() - spoolsAskedAt >= (uint32_t)spoolsReadyAfterMs) {
+    if (spoolsFail) inventory.state = SpoolState::Failed;
+    else {
+      make_inventory();
+      inventory.state = SpoolState::Ready;
+    }
+  }
+  if (sent.waiting && millis() - sent.at >= (uint32_t)answerAfterMs) {
+    sent.waiting = false;
+    Request r;
+    bool any = command_request(sent.job, live ? atoi(getenv("BAMBUDDY_PRINTER")) : 1, r);
+    printf("[sim] would send: %s %s %s\n", any ? r.method : "(nothing)", r.path, r.body);
+    if (live) {
+      toast("Simulator: not sent", true);
+    } else {
+      char text[sizeof(cur.toast)];
+      bool ok = command_result(sent.job, any ? 200 : 0, text, sizeof(text));
+      toast(text, !ok);
+      sent.settling = any;
+      sent.at = millis();
+    }
+  }
+  if (sent.settling && millis() - sent.at >= SETTLE_MS) {
+    sent.settling = false;
+    apply(sent.job);
+    cur.seq++;
+  }
 }
 
 // ---------------------------------------------------------------- live mode (read-only)
@@ -229,12 +370,14 @@ static bool write_bmp(const std::string &path)
   return true;
 }
 
-// A pretend finger for screenshots of pressed buttons.
-static bool fingerDown = false;
-static int fingerX = 0, fingerY = 0;
+static int fingerX = 0, fingerY = 0; // where the pretend finger is
 
-static const int TOAST_WAIT_MS = 2700; // a toast is gone after this
+static const int NOTICE_WAIT_MS = 6200; // a notice is gone after this, a failure's too
 
+static lv_display_t *shotDisplay;
+
+// The screenshot, then the same screen with its touch targets framed (targets/), and the
+// checks on what it shows (checks.cpp).
 static bool save(const std::string &dir, const char *name)
 {
   std::string path = dir + "/" + name + ".bmp";
@@ -242,16 +385,29 @@ static bool save(const std::string &dir, const char *name)
     fprintf(stderr, "can't write %s\n", path.c_str());
     return false;
   }
+  checks_run(name);
+  checks_overlay_show();
+  lv_refr_now(shotDisplay);
+  bool ok = write_bmp(dir + "/targets/" + name + ".bmp");
+  checks_overlay_hide();
+  lv_refr_now(shotDisplay);
+  if (!ok) {
+    fprintf(stderr, "can't write into %s/targets\n", dir.c_str());
+    return false;
+  }
   lv_mem_monitor_t m;
   lv_mem_monitor(&m);
-  printf("%s  led=%c%c%c  lvgl mem peak %u of %u\n", path.c_str(), ledR ? 'R' : '-', ledG ? 'G' : '-',
-         ledB ? 'B' : '-', (unsigned)m.max_used, (unsigned)m.total_size);
+  printf("%s  led=%c%c%c  backlight %d%%  lvgl mem %u now, peak %u of %u\n", path.c_str(), ledR ? 'R' : '-',
+         ledG ? 'G' : '-', ledB ? 'B' : '-', backlight, (unsigned)(m.total_size - m.free_size), (unsigned)m.max_used,
+         (unsigned)m.total_size);
+  fflush(stdout);
   return true;
 }
 
 static void spin(int ms)
 {
   for (uint32_t t = millis(); millis() - t < (uint32_t)ms;) {
+    bambuddy_tick();
     ui_update(cur);
     lv_timer_handler();
     SDL_Delay(5);
@@ -302,6 +458,33 @@ static lv_obj_t *find_button(lv_obj_t *o, const char *text)
   return nullptr;
 }
 
+// The `nth` button on show under `o` that holds an icon, counting from 0, in the order they
+// were made: in the status screen's header the spool, then the wrench.
+static lv_obj_t *find_icon_button(lv_obj_t *o, int &nth)
+{
+  if (lv_obj_check_type(o, &lv_button_class) && lv_obj_is_visible(o))
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+      if (lv_obj_check_type(lv_obj_get_child(o, i), &lv_image_class) && nth-- == 0) return o;
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+    if (lv_obj_t *found = find_icon_button(lv_obj_get_child(o, i), nth)) return found;
+  return nullptr;
+}
+
+static lv_point_t icon_button(int nth, const char *what)
+{
+  lv_obj_update_layout(lv_screen_active());
+  lv_obj_t *b = find_icon_button(lv_screen_active(), nth);
+  if (!b) {
+    fprintf(stderr, "no %s on the screen\n", what);
+    exit(1);
+  }
+  lv_area_t a;
+  lv_obj_get_coords(b, &a);
+  return {(a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2};
+}
+#define SPOOL icon_button(0, "spool button")
+#define WRENCH icon_button(1, "wrench")
+
 // The middle of that button. Stops the run when the screen has no such button: the
 // screenshots would be of something else than their names say.
 static lv_point_t button(const char *text)
@@ -317,11 +500,41 @@ static lv_point_t button(const char *text)
   return {(a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2};
 }
 
+static uint32_t nextSeq()
+{
+  // Above anything the scenario loop used, and in steps: a command counts the made-up state's
+  // number up by one, which must not land on the next number handed out here.
+  static uint32_t seq = 100000;
+  return seq += 100;
+}
+
+static Snapshot scenario_named(const char *name)
+{
+  for (int i = 0; i < scenarioCount; i++)
+    if (!strcmp(scenarios[i].name, name)) return scenarios[i].make();
+  fprintf(stderr, "no scenario \"%s\"\n", name);
+  exit(1);
+}
+
+// A file name from a notice's words: "WiFi is down" -> "wifi-is-down".
+static std::string slug(const std::string &text)
+{
+  std::string s;
+  for (char c : text) {
+    if (isalnum((unsigned char)c)) s += (char)tolower((unsigned char)c);
+    else if (!s.empty() && s.back() != '-') s += '-';
+  }
+  while (!s.empty() && s.back() == '-') s.pop_back();
+  return s;
+}
+
 static int run_shots(const std::string &dir)
 {
   frame.resize(screenW * screenH);
   strip.resize(screenW * (screenH / 10));
-  lv_display_t *disp = lv_display_create(screenW, screenH);
+  lv_display_t *disp = shotDisplay = lv_display_create(screenW, screenH);
+  mkdir((dir + "/targets").c_str(), 0755);
+  checks_begin(screenW, screenH);
   lv_display_set_flush_cb(disp, flush_strip);
   lv_display_set_buffers(disp, strip.data(), nullptr, strip.size() * 2, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_indev_t *indev = lv_indev_create(); // the UI asks whether a finger is down
@@ -337,53 +550,342 @@ static int run_shots(const std::string &dir)
     cur = scenarios[i].make();
     cur.seq = i + 1;
     ui_update(cur);
+    lv_timer_handler(); // as the panel's loop does: a screen that was taken away is freed here
     lv_refr_now(disp);
     if (!save(dir, scenarios[i].name)) return 1;
   }
 
-  // Let the last scenario's toast time out so it isn't in the pictures below.
-  spin(TOAST_WAIT_MS);
+  // Let the last scenario's notice time out so it isn't in the pictures below.
+  spin(NOTICE_WAIT_MS);
 
-  // Maintenance: open it with the wrench, page once, go back.
+  // Maintenance: open it with the wrench, turn the page, go back.
   cur = scenarios[0].make();
-  cur.seq = scenarioCount + 2;
+  cur.seq = nextSeq();
   ui_update(cur);
-  tap(disp, button(nullptr)); // the wrench
+  tap(disp, WRENCH);
   if (!save(dir, "maintenance")) return 1;
-  tap(disp, button("More"));
+  tap(disp, button(LV_SYMBOL_RIGHT));
   if (!save(dir, "maintenance-page-2")) return 1;
   tap(disp, button("Back"));
   if (!save(dir, "maintenance-closed")) return 1;
 
-  ui_calibrate(2, 4, screenW - 1 - screenH / 12, screenH / 12); // as calibrate.cpp places it
-  if (!save(dir, "calibrate")) return 1;
+  // "Mark done" held part of the way, all the way (Bambuddy has it), and answered.
+  answerAfterMs = 1200;
+  tap(disp, WRENCH);
+  lv_point_t at = button("Mark done");
+  press(disp, at.x, at.y, 800);
+  if (!save(dir, "maintenance-hold")) return 1;
+  release();
+  press(disp, at.x, at.y, 1700);
+  if (!save(dir, "maintenance-hold-fired")) return 1;
+  release();
+  spin(1000);
+  lv_refr_now(disp);
+  if (!save(dir, "maintenance-marked-done")) return 1;
+  tap(disp, button("Back"));
+  spin(NOTICE_WAIT_MS);
 
-  // Pressed buttons: a tap button and a hold button, on the first scenario.
+  // The other lists: every page of each. (With the tasks not read yet there is no wrench.)
+  for (const char *name : {"tasks-none", "tasks-one", "tasks-full"}) {
+    cur = scenario_named(name);
+    cur.seq = nextSeq();
+    ui_update(cur);
+    tap(disp, WRENCH);
+    for (int page = 1, pages = (cur.taskCount + 3) / 4; page <= (pages ? pages : 1); page++) {
+      char file[48];
+      snprintf(file, sizeof(file), "maintenance-%s-%d", name, page);
+      if (!save(dir, file)) return 1;
+      if (page < pages) tap(disp, button(LV_SYMBOL_RIGHT));
+    }
+    tap(disp, button("Back"));
+  }
+
+  // Filament: the slots, the spool list for one (as it is read, then read), another material,
+  // a spool held and assigned, and the slot's own spool taken out.
   cur = scenarios[0].make();
-  cur.seq = scenarioCount + 3;
+  cur.seq = nextSeq();
+  spin(50);
+  tap(disp, SPOOL);
+  if (!save(dir, "filament-slots")) return 1;
+  tap(disp, button("Change"));
+  if (!save(dir, "filament-reading")) return 1;
+  spin(1000);
+  lv_refr_now(disp);
+  if (!save(dir, "filament-spools")) return 1;
+  tap(disp, button(LV_SYMBOL_RIGHT));
+  if (!save(dir, "filament-spools-page-2")) return 1;
+  tap(disp, button("PETG"));
+  if (!save(dir, "filament-spools-next-material")) return 1;
+  answerAfterMs = 1200;
+  at = button("Assign");
+  press(disp, at.x, at.y, 800);
+  if (!save(dir, "filament-assign-hold")) return 1;
+  release();
+  press(disp, at.x, at.y, 1700);
+  if (!save(dir, "filament-assign-fired")) return 1;
+  release();
+  spin(2200);
+  lv_refr_now(disp);
+  if (!save(dir, "filament-assigned")) return 1;
+  answerAfterMs = 500;
+  tap(disp, button("Assign")); // the first slot without a spool
+  spin(1000);
+  lv_refr_now(disp);
+  if (!save(dir, "filament-spools-other-slot")) return 1;
+  tap(disp, button(LV_SYMBOL_LEFT " A3"));
+  spoolsFail = true;
+  tap(disp, button("Change"));
+  spin(1000);
+  lv_refr_now(disp);
+  if (!save(dir, "filament-spools-failed")) return 1;
+  spoolsFail = false;
+  tap(disp, button(LV_SYMBOL_LEFT " A1"));
+  tap(disp, button("Back"));
+
+  cur = scenario_named("slots-many");
+  cur.seq = nextSeq();
+  spin(50);
+  tap(disp, SPOOL);
+  if (!save(dir, "filament-slots-many")) return 1;
+  tap(disp, button(LV_SYMBOL_RIGHT));
+  tap(disp, button(LV_SYMBOL_RIGHT));
+  if (!save(dir, "filament-slots-many-3")) return 1;
+  tap(disp, button("Back"));
+
+  // Pressed buttons: a tap, and a hold part of the way, all the way, and answered.
+  cur = scenarios[0].make();
+  cur.seq = nextSeq();
   ui_update(cur);
   lv_refr_now(disp);
-  lv_point_t at = button("Pause");
+  at = button("Pause");
   press(disp, at.x, at.y, 300);
   if (!save(dir, "pressed-tap")) return 1;
-  release();
+  release(); // the tap is sent now; Bambuddy has it for a moment
+  lv_refr_now(disp);
+  if (!save(dir, "pressed-tap-under-way")) return 1;
+  spin(2000 + NOTICE_WAIT_MS);
   cur = scenarios[0].make(); // the tap paused the made-up print; start over
-  cur.seq = 1000;
+  cur.seq = nextSeq();
   spin(50);
   at = button("Hold to stop");
-  press(disp, at.x, at.y, 600);
+  press(disp, at.x, at.y, 800);
   if (!save(dir, "pressed-hold")) return 1;
   release();
+  lv_refr_now(disp);
+  if (!save(dir, "pressed-hold-let-go")) return 1;
+  press(disp, at.x, at.y, 1700);
+  if (!save(dir, "pressed-hold-fired")) return 1;
+  release();
+  spin(1000);
+  lv_refr_now(disp);
+  if (!save(dir, "pressed-hold-answered")) return 1;
+  spin(NOTICE_WAIT_MS);
+  answerAfterMs = 500;
 
-  // "Later" on the outcome question: the plate-clear screen comes up for that print.
-  for (int i = 0; i < scenarioCount; i++)
-    if (!strcmp(scenarios[i].name, "verdict")) cur = scenarios[i].make();
-  cur.seq = 2000;
-  spin(TOAST_WAIT_MS);
-  tap(disp, button("Later"));
+  // Several errors: a tap on the box shows the next.
+  cur = scenario_named("error-many");
+  cur.seq = nextSeq();
+  spin(50);
+  lv_obj_update_layout(lv_screen_active());
+  tap(disp, {screenW / 2, screenH * 100 / 240});
+  if (!save(dir, "error-many-second")) return 1;
+
+  // "Skip" on the outcome question: the plate-clear screen comes up for that print.
+  cur = scenario_named("verdict");
+  cur.seq = nextSeq();
+  spin(50);
+  tap(disp, button("Skip"));
   spin(50);
   lv_refr_now(disp);
-  if (!save(dir, "verdict-later")) return 1;
+  if (!save(dir, "verdict-skipped")) return 1;
+
+  // A dimmed panel: a minute untouched while nothing wants anyone, and the touch that wakes it.
+  cur = scenarios[0].make();
+  cur.seq = nextSeq();
+  spin(50);
+  restAfterMs = 300;
+  spin(600);
+  lv_refr_now(disp);
+  if (!save(dir, "dimmed")) return 1;
+  at = button("Pause");
+  tap(disp, at); // only brightens: nothing is sent
+  if (!save(dir, "dimmed-woken")) return 1;
+  restAfterMs = 0;
+
+  // Every notice the panel can show: each command with each kind of answer, each wording once.
+  struct Notice {
+    std::string text;
+    bool bad;
+  };
+  std::vector<Notice> notices = {{"Busy, try again", true}}; // ui.cpp's own, when the queue is full
+  for (Command c : {Command::Pause, Command::Resume, Command::Stop, Command::ClearPlate, Command::ClearErrors,
+                    Command::ResumeQueue, Command::StartNext, Command::VerdictGood, Command::VerdictReject,
+                    Command::PerformTask})
+    for (int code : {200, 0, 401, 403, 404, 409, 400, 503, ERR_NO_WIFI, -1, 418}) {
+      char text[sizeof(cur.toast)];
+      bool ok = command_result({c, 1, 0}, code, text, sizeof(text));
+      bool seen = false;
+      for (const Notice &n : notices) seen = seen || n.text == text;
+      if (!seen) notices.push_back({text, !ok});
+    }
+  cur = scenario_named("paused");
+  for (size_t i = 0; i < notices.size(); i++) {
+    snprintf(cur.toast, sizeof(cur.toast), "%s", notices[i].text.c_str());
+    cur.toastBad = notices[i].bad;
+    cur.toastSeq = 5000 + i;
+    cur.seq = nextSeq();
+    ui_update(cur);
+    lv_refr_now(disp);
+    if (!save(dir, ("notice-" + slug(notices[i].text)).c_str())) return 1;
+  }
+  spin(NOTICE_WAIT_MS);
+
+  // The start-up and setup screens, in the order a new panel shows them, with the panel's own
+  // words (messages.h) and made-up values where it fills some in.
+  char wifiQr[96], webQr[96], calNone[120], calGiveUp[120];
+  snprintf(wifiQr, sizeof(wifiQr), MSG_WIFI_QR, "BambuddyPanel-Setup", "k3mw-9xbq-7hfe");
+  snprintf(webQr, sizeof(webQr), MSG_WEB_QR, "192.168.178.123", "abcd-efgh");
+  snprintf(calNone, sizeof(calNone), MSG_CAL_NO_TOUCH, MSG_CAL_KEEP_STANDARD);
+  snprintf(calGiveUp, sizeof(calGiveUp), MSG_CAL_GIVING_UP, MSG_CAL_KEEP_SAVED);
+  CodeScreen wifi, web;
+  wifi.title = MSG_WIFI_SETUP_TITLE;
+  wifi.qr = wifiQr;
+  wifi.label1 = MSG_WIFI_LABEL_NAME;
+  wifi.value1 = "BambuddyPanel-Setup";
+  wifi.label2 = MSG_WIFI_LABEL_PASSWORD;
+  wifi.value2 = "k3mw-9xbq-7hfe";
+  wifi.note = MSG_WIFI_NOTE;
+  web.title = MSG_WEB_FIRST_TITLE;
+  web.qr = webQr;
+  web.label1 = MSG_WEB_LABEL_ADDRESS;
+  web.value1 = "192.168.178.123";
+  web.label2 = MSG_WEB_LABEL_CODE;
+  web.value2 = "abcd-efgh";
+
+  ui_message(MSG_STARTING_TITLE, MSG_STARTING_BODY);
+  if (!save(dir, "msg-01-starting")) return 1;
+  ui_message(MSG_SETUP_TITLE, MSG_SETUP_HOLD_BODY);
+  if (!save(dir, "msg-02-setup-hold")) return 1;
+  ui_code(wifi);
+  if (!save(dir, "msg-03-wifi-setup")) return 1;
+  ui_message(MSG_CONNECTING_TITLE, MSG_CONNECTING_WIFI, true);
+  if (!save(dir, "msg-04-joining-wifi")) return 1;
+  ui_code(web); // a new panel: nothing to cancel back to
+  if (!save(dir, "msg-05-web-first")) return 1;
+  web.title = MSG_WEB_LATER_TITLE;
+  ui_code(web);
+  ui_message_buttons(MSG_WEB_CANCEL, MSG_WEB_CALIBRATE);
+  if (!save(dir, "msg-06-web-later")) return 1;
+  ui_message_buttons(MSG_WEB_CANCEL); // a panel with capacitive touch has nothing to calibrate
+  if (!save(dir, "msg-06-web-later-capacitive")) return 1;
+  ui_message(MSG_CONNECTING_TITLE, MSG_CONNECTING_BAMBUDDY, true);
+  if (!save(dir, "msg-07-asking-bambuddy")) return 1;
+  const struct {
+    const char *file, *title, *body;
+  } messages[] = {
+      {"msg-08-no-wifi-saved", MSG_SETUP_TITLE, MSG_SETUP_NO_WIFI_SAVED},
+      {"msg-09-not-on-wifi", MSG_SETUP_TITLE, MSG_SETUP_NOT_ON_WIFI},
+      {"msg-10-wifi-forgotten", MSG_SETUP_TITLE, MSG_SETUP_WIFI_FORGOTTEN},
+      {"msg-11-updating", MSG_UPDATING_TITLE, MSG_UPDATING_BODY},
+      {"msg-12-cal-saved", MSG_CAL_TITLE, MSG_CAL_SAVED},
+      {"msg-13-cal-retry", MSG_CAL_TITLE, MSG_CAL_RETRY},
+      {"msg-14-cal-no-touch", MSG_CAL_TITLE, calNone},
+      {"msg-15-cal-giving-up", MSG_CAL_TITLE, calGiveUp},
+  };
+  for (const auto &m : messages) {
+    ui_message(m.title, m.body);
+    if (!save(dir, m.file)) return 1;
+  }
+
+  // Bambuddy saying no, and Bambuddy silent for too long, with every reason the panel gives.
+  for (int code : {401, 403, 404, ERR_HTTPS, ERR_BAD_URL, ERR_NO_WIFI, ERR_BAD_JSON, -11, -1, -5, 502, 302}) {
+    char file[32];
+    snprintf(file, sizeof(file), code < 0 ? "offline-err%d" : "offline-http-%d", code < 0 ? -code : code);
+    cur = Snapshot();
+    cur.printerId = 12;
+    cur.httpCode = code;
+    cur.seq = nextSeq();
+    ui_update(cur);
+    lv_timer_handler();
+    lv_refr_now(disp);
+    if (!save(dir, file)) return 1;
+  }
+
+  // Touch calibration: the four crosses, placed as calibrate.cpp places them.
+  const int inset = screenH / 12;
+  const int cross[4][2] = {{inset, inset}, {screenW - 1 - inset, inset}, {screenW - 1 - inset, screenH - 1 - inset},
+                           {inset, screenH - 1 - inset}};
+  for (int i = 0; i < 4; i++) {
+    ui_calibrate(i + 1, 4, cross[i][0], cross[i][1]);
+    char file[24];
+    snprintf(file, sizeof(file), i == 1 ? "calibrate" : "calibrate-%d", i + 1); // "calibrate" is in the README
+    if (!save(dir, file)) return 1;
+  }
+
+  if (!checks_write(dir + "/checks.txt")) return 1;
+  printf("%d problems found by the checks, see %s/checks.txt\n", checks_problems(), dir.c_str());
+  return 0;
+}
+
+// ---------------------------------------------------------------- the settings web page
+
+struct StdPage : PageText {
+  std::string s;
+  using PageText::operator+=;
+  PageText &operator+=(const char *text) override
+  {
+    s += text;
+    return *this;
+  }
+};
+
+// The page in each state setup_web.cpp serves it in. The messages are that file's own words,
+// copied: it needs the panel's web server, so it can't be built in here.
+static int run_web(const std::string &dir)
+{
+  static const PageChoice printers[] = {{1, "X1C"}, {2, "Workshop H2D left bench"}, {7, "A1 mini <kitchen>"}};
+  struct {
+    const char *file;
+    PageData d;
+  } pages[5];
+  pages[0].file = "1-first-run";
+  pages[1].file = "2-wrong-code";
+  pages[1].d.msg = "That code doesn't match the one on the panel's screen.";
+  pages[1].d.kind = "e";
+  pages[2].file = "3-saved-not-accepted";
+  pages[2].d.msg = "Saved, but Bambuddy refused the API key. Fix it and save again, or use the settings as they "
+                   "are if Bambuddy is only down for now.";
+  pages[2].d.kind = "e";
+  pages[2].d.typedCode = "abcd-efgh";
+  pages[2].d.url = "http://192.168.1.50:3700";
+  pages[2].d.keySaved = true;
+  pages[2].d.printerId = 2;
+  pages[2].d.finishAnyway = true;
+  pages[3].file = "4-saved";
+  pages[3].d.msg = "Saved, and Bambuddy answered. The panel is starting; you can close this page.";
+  pages[3].d.kind = "ok";
+  pages[3].d.done = true;
+  pages[4].file = "5-settings-later";
+  for (int i : {3, 4}) {
+    pages[i].d.url = "http://192.168.1.50:3700";
+    pages[i].d.keySaved = true;
+    pages[i].d.printerId = 2;
+    pages[i].d.choices = printers;
+    pages[i].d.choiceCount = 3;
+    pages[i].d.printerName = printers[1].name;
+  }
+  for (const auto &page : pages) {
+    StdPage out;
+    setup_page(out, page.d);
+    std::string path = dir + "/" + page.file + ".html";
+    FILE *f = fopen(path.c_str(), "w");
+    if (!f || fwrite(out.s.data(), 1, out.s.size(), f) != out.s.size()) {
+      fprintf(stderr, "can't write %s\n", path.c_str());
+      return 1;
+    }
+    fclose(f);
+    printf("%s  %u bytes\n", path.c_str(), (unsigned)out.s.size());
+  }
   return 0;
 }
 
@@ -443,6 +945,7 @@ static int run_window()
     }
     if (pressed(SDL_SCANCODE_Q)) return 0;
 
+    bambuddy_tick();
     ui_update(cur);
     update_title(disp);
     lv_timer_handler();
@@ -452,15 +955,16 @@ static int run_window()
 
 int main(int argc, char **argv)
 {
-  std::string shots;
+  std::string shots, web;
   for (int i = 1; i < argc; i++) {
     std::string a = argv[i];
     if (a == "--live") live = true;
     else if (a == "--shots" && i + 1 < argc) shots = argv[++i];
+    else if (a == "--web" && i + 1 < argc) web = argv[++i];
     else if (a == "--size" && i + 1 < argc && sscanf(argv[i + 1], "%dx%d", &screenW, &screenH) == 2 &&
              screenW >= 160 && screenW <= 1920 && screenH >= 120 && screenH <= 1080) i++;
     else {
-      fprintf(stderr, "usage: %s [--live | --shots <dir>] [--size <W>x<H>]\n", argv[0]);
+      fprintf(stderr, "usage: %s [--live | --shots <dir> | --web <dir>] [--size <W>x<H>]\n", argv[0]);
       return 2;
     }
   }
@@ -483,6 +987,8 @@ int main(int argc, char **argv)
     }
     poller.printerId = atoi(env("BAMBUDDY_PRINTER").c_str());
   }
+
+  if (!web.empty()) return run_web(web);
 
   lv_init();
   lv_tick_set_cb(millis);

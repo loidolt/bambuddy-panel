@@ -16,5 +16,9 @@ extern Settings settings;
 void settings_load();
 void settings_save();
 
+// "Open settings" on the running panel: remembered across the restart that gets it there.
+void settings_request_setup();
+bool settings_take_setup_request(); // true once, at the start after it was asked for
+
 bool settings_load_touch(TouchCal &c); // false when the panel was never calibrated
 void settings_save_touch(const TouchCal &c);

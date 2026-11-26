@@ -8,9 +8,15 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch or pull request replaces the run in progress.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       # Actions pinned to commits; the comment names the release.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -21,14 +27,15 @@ jobs:
 
       - name: Install PlatformIO and SDL2
         run: |
-          pip install platformio
+          pip install platformio==6.2.0
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev
 
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.platformio
-          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'boards/*.ini') }}
+          restore-keys: pio-${{ runner.os }}-
 
       # Warnings in the panel's own code fail every build below (-Werror in platformio.ini).
       - name: Unit tests
@@ -39,34 +46,60 @@ jobs:
           python3 tools/make_icons.py
           git diff --exit-code src/icons.c
 
-      # Every [env:...] in boards/*.ini.
+      # Every [env:...] in boards/*.ini. With no names `pio run` would build the default board
+      # alone and pass, so an empty list, or one shorter than the README's, fails here.
       - name: Firmware, every board
-        run: pio run $(grep -ho '^\[env:[^]]*' boards/*.ini | sed 's/^\[env:/-e /')
+        run: |
+          envs=$(grep -ho '^\[env:[^]]*' boards/*.ini | sed 's/^\[env://')
+          count=$(echo "$envs" | grep -c .)
+          echo "$count boards: $(echo $envs)"
+          test "$count" -ge 10
+          for e in $envs; do grep -q "\`$e\`" README.md || { echo "$e is not in the README"; exit 1; }; done
+          pio run $(echo "$envs" | sed 's/^/-e /')
 
+      # The marker is the OTA host name, which is only compiled in with OTA_PASSWORD: it shows
+      # that the flag reached the compiler, and below that it is gone again.
       - name: Firmware with updates over WiFi turned on
         env:
           PLATFORMIO_BUILD_FLAGS: -DOTA_PASSWORD=\"ci-only-password\"
-        run: pio run -e cyd-st7789 -t clean && pio run -e cyd-st7789
+        run: |
+          pio run -e cyd-st7789 -t clean && pio run -e cyd-st7789
+          grep -a -q 'bambuddy-panel-%d' .pio/build/cyd-st7789/firmware.bin
 
       - name: Firmware without OTA again, for the artifact
-        run: pio run -e cyd-st7789 -t clean && pio run -e cyd-st7789
+        run: |
+          pio run -e cyd-st7789 -t clean && pio run -e cyd-st7789
+          if grep -a -l -e 'bambuddy-panel-%d' -e 'ci-only-password' .pio/build/*/firmware.bin; then
+            echo "an OTA build is left among the firmware files"; exit 1
+          fi
 
       - name: Simulator screenshots
         run: ./tools/shots.sh
 
       - name: README screenshots match the simulator
-        run: python3 tools/compare_shots.py docs/screenshots shots
+        run: python3 tools/compare_shots.py docs/screenshots shots README.md
 
       # The same screens on a bigger panel: fails when a button the screenshots press is gone.
       - name: Simulator screenshots at 480x320
         run: ./tools/shots.sh 480x320
 
+      # The license texts that go with the firmware files (see THIRD_PARTY.md).
+      - name: License notices
+        run: python3 tools/collect_notices.py notices
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: firmware
-          path: .pio/build/*/firmware.bin
+          # With the bootloader and partition table: what a board needs besides the firmware.
+          path: |
+            .pio/build/*/firmware.bin
+            .pio/build/*/bootloader.bin
+            .pio/build/*/partitions.bin
+            notices/*
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: screenshots
           path: shots/**/*.png
+          if-no-files-found: error

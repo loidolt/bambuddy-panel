@@ -1,22 +1,25 @@
-// The maintenance screen: the printer's maintenance tasks, most urgent first, four per page,
-// and the wrench in the status screen's header that opens it.
+// The maintenance screen: the printer's maintenance tasks, most urgent first, four to a page,
+// and the wrench in the status screen's header that opens it. The gear on it opens the
+// panel's settings.
 #include "icons.h"
+#include "ui.h"
 #include "ui_internal.h"
 #include "ui_logic.h"
 
-static const int TASK_ROWS = 4;               // per page
-static const uint32_t TASKS_IDLE_MS = 30000;  // then back to the status screen by itself
-static const int ROW_Y = 50, ROW_H = 44, ROW_GAP = 3; // units
+#include <initializer_list>
 
-static lv_obj_t *maintBox, *btnTasks, *lblTasksCount, *btnMore, *lblMore, *lblNoTasks;
-static lv_obj_t *taskRow[TASK_ROWS], *lblTaskName[TASK_ROWS], *lblTaskDue[TASK_ROWS], *lblTaskDone[TASK_ROWS],
-    *btnTaskDone[TASK_ROWS];
+static const int TASK_ROWS = 4;               // per page
+static const uint32_t TASKS_IDLE_MS = 60000;  // then back to the status screen by itself
+static const int ROW_GAP = 2, BUTTON_W = 100; // units
+
+static lv_obj_t *maintBox, *lblTasksCount, *lblTitle, *lblPage, *lblNoTasks;
+static lv_obj_t *taskRow[TASK_ROWS], *lblTaskName[TASK_ROWS], *lblTaskDue[TASK_ROWS];
+static UiButton btnWrench, btnBack, btnGear, btnPrev, btnNext, btnDone[TASK_ROWS];
 static bool showing = false;
-static int page = 0;
+static int page = 0, pages = 1;
 static uint32_t touchedAt = 0;
-static Task shown[MAX_TASKS]; // what the rows show, so Done acts on the task the person sees
+static Task shown[MAX_TASKS]; // what the rows show, so "Mark done" acts on the task the person sees
 static int shownCount = 0;
-static Hold hold;
 
 static void touched()
 {
@@ -24,131 +27,166 @@ static void touched()
   ui_redraw_soon();
 }
 
-static void open_cb(lv_event_t *)
+static void open_fire(UiButton &)
 {
   showing = true;
   page = 0;
   touched();
 }
 
-static void back_cb(lv_event_t *)
+static void back_fire(UiButton &)
 {
   showing = false;
   touched();
 }
 
-static void more_cb(lv_event_t *)
+static void page_fire(UiButton &b)
 {
-  page++; // wraps to the first page when drawn
+  page = (page + b.tag + pages) % pages; // tag: -1 back, +1 on; round at both ends
   touched();
 }
 
-// "Done" resets the task's counter in Bambuddy, so it takes a hold, like Stop.
-static void done_cb(lv_event_t *e)
-{
-  int row = (int)(intptr_t)lv_event_get_user_data(e);
-  int i = page * TASK_ROWS + row;
-  if (i >= shownCount) return;
+static void gear_fire(UiButton &) { ui_open_settings(); }
 
-  switch (lv_event_get_code(e)) {
-  case LV_EVENT_PRESSED:
-    hold.start = touchedAt = millis();
-    hold.fired = false;
-    lv_label_set_text(lblTaskDone[row], "Hold...");
-    break;
-  case LV_EVENT_PRESSING:
-    if (!hold.fired && millis() - hold.start >= HOLD_MS) {
-      hold.fired = true;
-      lv_label_set_text(lblTaskDone[row], "OK");
-      ui_send(Command::PerformTask, shown[i].id);
-    }
-    break;
-  case LV_EVENT_RELEASED:
-  case LV_EVENT_PRESS_LOST:
-    touchedAt = millis();
-    if (!hold.fired) lv_label_set_text(lblTaskDone[row], "Done");
-    break;
-  default:
-    break;
-  }
+static void draw_rows(); // below
+
+// "Mark done" resets the task's counter in Bambuddy, so it takes a hold.
+static void done_fire(UiButton &b)
+{
+  int i = page * TASK_ROWS + b.tag;
+  if (i >= shownCount) return;
+  touchedAt = millis();
+  ui_send(Command::PerformTask, shown[i].id);
+  draw_rows(); // at once: the finger is still down, which holds back the full redraw
 }
 
 void tasks_create(lv_obj_t *screen, lv_obj_t *header)
 {
-  const int W = ui.uw, H = ui.uh; // in units, see ui_internal.h
-
   // Wrench: opens the maintenance screen. Small, so it takes taps from a little around it too.
-  btnTasks = ui_button(header, C_CHIP, W - 176, 4, 42, 30, nullptr);
-  lv_obj_set_ext_click_area(btnTasks, px(8));
-  lv_obj_set_flex_flow(btnTasks, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(btnTasks, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(btnTasks, px(3), 0);
-  lv_obj_add_event_cb(btnTasks, open_cb, LV_EVENT_CLICKED, nullptr);
-  ui_icon(btnTasks, &icon_wrench, C_TEXT);
-  lblTasksCount = lv_label_create(btnTasks);
+  ui_button_create(btnWrench, header, open_fire);
+  lv_obj_set_size(btnWrench.btn, px(HEADER_ICON_W), px(HEADER_ICON_H));
+  lv_obj_set_ext_click_area(btnWrench.btn, px(HEADER_ICON_REACH));
+  lv_obj_set_flex_flow(btnWrench.btn, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(btnWrench.btn, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(btnWrench.btn, px(3), 0);
+  lv_obj_add_flag(btnWrench.label, LV_OBJ_FLAG_HIDDEN); // an icon and a count instead of words
+  ui_icon(btnWrench.btn, ICON(icon_wrench), C_TEXT);
+  lblTasksCount = lv_label_create(btnWrench.btn);
   lv_obj_set_style_text_font(lblTasksCount, ui.small, 0);
   lv_obj_set_style_text_color(lblTasksCount, lv_color_hex(C_TEXT), 0);
   lv_label_set_text(lblTasksCount, "");
-  lv_obj_add_flag(btnTasks, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(btnWrench.btn, LV_OBJ_FLAG_HIDDEN);
+  (void)screen;
+}
 
-  // The screen: a header and four task rows per page. Every button is at least 44 units tall.
-  maintBox = ui_box(screen);
-  lv_obj_t *back = ui_button(maintBox, C_GREY, 8, 2, 80, 44, LV_SYMBOL_LEFT " Back");
-  lv_obj_add_event_cb(back, back_cb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t *title = ui_label(maintBox, ui.small, C_TEXT, 92, 16, W - 192);
-  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
-  lv_label_set_text(title, "Maintenance");
-  btnMore = ui_button(maintBox, C_GREY, W - 96, 2, 88, 44, "More", &lblMore);
-  lv_obj_add_event_cb(btnMore, more_cb, LV_EVENT_CLICKED, nullptr);
+// The screen: a header and four task rows to a page, everything to press TARGET tall. Made when
+// it is opened and taken away when it closes, to leave LVGL's small memory to the status screen.
+static void build()
+{
+  if (maintBox) return;
+  const int W = ui.uw;
+  maintBox = ui_box(lv_screen_active());
+  for (UiButton *b : {&btnBack, &btnGear, &btnPrev, &btnNext}) *b = UiButton();
+  for (UiButton &b : btnDone) b = UiButton();
+  auto head = [&](UiButton &b, int x, int w, const char *text, void (*fire)(UiButton &), int tag = 0) {
+    ui_button_create(b, maintBox, fire, tag);
+    lv_obj_set_pos(b.btn, px(x), px(ROW_GAP));
+    lv_obj_set_size(b.btn, px(w), px(TARGET));
+    ui_button_set(b, text, Kind::Quiet, false);
+  };
+  head(btnBack, 8, 72, LV_SYMBOL_LEFT " Back", back_fire);
+  head(btnGear, 86, TARGET, LV_SYMBOL_SETTINGS, gear_fire);
+  ui_button_set(btnGear, LV_SYMBOL_SETTINGS, Kind::Quiet, true); // it restarts the panel: a hold
+  head(btnPrev, W - 8 - TARGET - 36 - TARGET, TARGET, LV_SYMBOL_LEFT, page_fire, -1);
+  head(btnNext, W - 8 - TARGET, TARGET, LV_SYMBOL_RIGHT, page_fire, 1);
+  lblPage = ui_label(maintBox, ui.small, C_DIM, W - 8 - TARGET - 36, ROW_GAP + 15, 36);
+  lv_obj_set_style_text_align(lblPage, LV_TEXT_ALIGN_CENTER, 0);
+  lblTitle = ui_label(maintBox, ui.small, C_TEXT, 140, ROW_GAP + 15, W - 150);
+
   for (int row = 0; row < TASK_ROWS; row++) {
-    lv_obj_t *r = taskRow[row] = lv_obj_create(maintBox);
-    lv_obj_remove_style_all(r);
-    lv_obj_set_pos(r, px(8), px(ROW_Y + row * (ROW_H + ROW_GAP)));
-    lv_obj_set_size(r, px(W - 16), px(ROW_H));
-    lv_obj_remove_flag(r, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *r = taskRow[row] = ui_plain(maintBox);
+    lv_obj_set_pos(r, px(8), px(ROW_GAP + (row + 1) * (TARGET + ROW_GAP)));
+    lv_obj_set_size(r, px(W - 16), px(TARGET));
     lv_obj_set_style_bg_color(r, lv_color_hex(C_ROW), 0);
     lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(r, px(6), 0);
     lv_obj_set_style_border_side(r, LV_BORDER_SIDE_LEFT, 0); // coloured edge = how urgent
     lv_obj_set_style_border_width(r, px(4), 0);
-    lblTaskName[row] = ui_label(r, ui.small, C_TEXT, 8, 4, W - 124);
-    lblTaskDue[row] = ui_label(r, ui.small, C_DIM, 8, 23, W - 124);
-    lv_obj_t *done = btnTaskDone[row] = ui_button(r, C_GREY, W - 108, 0, 92, ROW_H, "Done", &lblTaskDone[row]);
-    lv_obj_add_event_cb(done, done_cb, LV_EVENT_ALL, (void *)(intptr_t)row);
+    const int text = W - 16 - 4 - 8 - 8 - BUTTON_W;
+    lblTaskName[row] = ui_label(r, ui.small, C_TEXT, 8, 5, text);
+    lblTaskDue[row] = ui_label(r, ui.small, C_DIM, 8, 24, text);
+    ui_button_create(btnDone[row], r, done_fire, row);
+    lv_obj_set_size(btnDone[row].btn, px(BUTTON_W), px(TARGET));
+    lv_obj_align(btnDone[row].btn, LV_ALIGN_RIGHT_MID, 0, 0);
   }
-  lblNoTasks = ui_label(maintBox, ui.small, C_DIM, 10, (H - 240) / 2 + 110, W - 20);
+  lblNoTasks = ui_label(maintBox, ui.small, C_DIM, 10, (ui.uh - 240) / 2 + 120, W - 20);
   lv_obj_set_style_text_align(lblNoTasks, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_add_flag(maintBox, LV_OBJ_FLAG_HIDDEN);
 }
 
 bool tasks_showing() { return showing; }
-void tasks_close() { showing = false; }
-lv_obj_t *tasks_box() { return maintBox; }
+
+void tasks_close()
+{
+  showing = false;
+  if (!maintBox) return;
+  lv_obj_delete_async(maintBox); // not at once: Back and the gear are its own buttons
+  maintBox = nullptr;
+}
 
 bool tasks_idle_timeout()
 {
   if (!showing || millis() - touchedAt <= TASKS_IDLE_MS) return false;
-  showing = false;
+  tasks_close();
   return true;
+}
+
+static void draw_rows()
+{
+  if (!maintBox) return;
+  char buf[40];
+  for (int row = 0; row < TASK_ROWS; row++) {
+    int i = page * TASK_ROWS + row;
+    if (i >= shownCount) {
+      lv_obj_add_flag(taskRow[row], LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    lv_obj_remove_flag(taskRow[row], LV_OBJ_FLAG_HIDDEN);
+    const Task &t = shown[i];
+    uint32_t edge = t.level == 2 ? C_RED : t.level == 1 ? C_AMBER : C_GREY;
+    uint32_t text = t.level == 2 ? C_BAD_TEXT : t.level == 1 ? C_WARN_TEXT : C_DIM;
+    ui_set_text(lblTaskName[row], t.name);
+    format_due(buf, sizeof(buf), t);
+    ui_set_text(lblTaskDue[row], buf);
+    lv_obj_set_style_text_color(lblTaskDue[row], lv_color_hex(text), 0);
+    lv_obj_set_style_border_color(taskRow[row], lv_color_hex(edge), 0);
+    // Green only where something is due, so the eye lands there first.
+    bool under_way = ui_pending(Command::PerformTask, t.id);
+    // The answer shows here, in the row that was pressed, until the list has been read again.
+    const char *words = !under_way ? "Mark done" : ui_answered() ? LV_SYMBOL_OK " Done" : "Saving...";
+    ui_button_set(btnDone[row], words, t.level > 0 ? Kind::Go : Kind::Quiet, true, Icon::None, t.id);
+    ui_button_enable(btnDone[row], !ui_busy());
+  }
 }
 
 void tasks_draw(const Snapshot &s)
 {
+  build();
   shownCount = s.taskCount;
   for (int i = 0; i < s.taskCount; i++) shown[i] = s.tasks[i];
 
-  int pages = (s.taskCount + TASK_ROWS - 1) / TASK_ROWS;
+  pages = (s.taskCount + TASK_ROWS - 1) / TASK_ROWS;
   if (pages < 1) pages = 1;
   if (page >= pages) page = 0;
 
-  char buf[40];
-  if (pages > 1) {
-    snprintf(buf, sizeof(buf), "More %d/%d", page + 1, pages);
-    lv_label_set_text(lblMore, buf);
-    lv_obj_remove_flag(btnMore, LV_OBJ_FLAG_HIDDEN);
-  } else {
-    lv_obj_add_flag(btnMore, LV_OBJ_FLAG_HIDDEN);
+  // With one page there is nothing to turn, and room for the title instead.
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d/%d", page + 1, pages);
+  lv_label_set_text(lblPage, buf);
+  for (lv_obj_t *o : {btnPrev.btn, btnNext.btn, lblPage}) {
+    if (pages > 1) lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
+  lv_label_set_text(lblTitle, pages > 1 ? "" : "Maintenance");
 
   if (s.taskCount == 0) {
     lv_label_set_text(lblNoTasks, s.tasksKnown ? "No maintenance tasks for this printer." : "Bambuddy hasn't sent the tasks yet.");
@@ -156,39 +194,23 @@ void tasks_draw(const Snapshot &s)
   } else {
     lv_obj_add_flag(lblNoTasks, LV_OBJ_FLAG_HIDDEN);
   }
-
-  for (int row = 0; row < TASK_ROWS; row++) {
-    int i = page * TASK_ROWS + row;
-    if (i >= s.taskCount) {
-      lv_obj_add_flag(taskRow[row], LV_OBJ_FLAG_HIDDEN);
-      continue;
-    }
-    const Task &t = s.tasks[i];
-    uint32_t edge = t.level == 2 ? C_RED : t.level == 1 ? C_AMBER : C_GREY;
-    uint32_t text = t.level == 2 ? C_BAD_TEXT : t.level == 1 ? C_WARN_TEXT : C_DIM;
-    lv_label_set_text(lblTaskName[row], t.name);
-    format_due(buf, sizeof(buf), t);
-    lv_label_set_text(lblTaskDue[row], buf);
-    lv_obj_set_style_text_color(lblTaskDue[row], lv_color_hex(text), 0);
-    lv_obj_set_style_border_color(taskRow[row], lv_color_hex(edge), 0);
-    lv_label_set_text(lblTaskDone[row], "Done");
-    // Green only where something is actually due, so the eye lands there first.
-    lv_obj_set_style_bg_color(btnTaskDone[row], lv_color_hex(t.level > 0 ? C_GREEN : C_GREY), 0);
-    lv_obj_remove_flag(taskRow[row], LV_OBJ_FLAG_HIDDEN);
-  }
+  draw_rows();
 }
 
-// Quiet when all is fine, coloured with a count when not.
+// Quiet when all is fine; an outline with a count when something is due soon; filled when due.
+// Amber, not red: red is for errors and for Stop.
 void tasks_draw_badge(const Snapshot &s)
 {
   if (!s.tasksKnown) {
-    lv_obj_add_flag(btnTasks, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(btnWrench.btn, LV_OBJ_FLAG_HIDDEN);
     return;
   }
-  lv_obj_remove_flag(btnTasks, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_remove_flag(btnWrench.btn, LV_OBJ_FLAG_HIDDEN);
   int n = s.tasksDue + s.tasksWarn;
   char buf[12] = "";
   if (n > 0) snprintf(buf, sizeof(buf), "%d", n);
   lv_label_set_text(lblTasksCount, buf);
-  lv_obj_set_style_bg_color(btnTasks, lv_color_hex(s.tasksDue ? C_RED : s.tasksWarn ? C_AMBER : C_CHIP), 0);
+  lv_obj_set_style_bg_color(btnWrench.btn, lv_color_hex(s.tasksDue ? C_AMBER : C_CHIP), 0);
+  lv_obj_set_style_border_color(btnWrench.btn, lv_color_hex(C_AMBER), 0);
+  lv_obj_set_style_border_width(btnWrench.btn, !s.tasksDue && s.tasksWarn ? px(2) : 0, 0);
 }
