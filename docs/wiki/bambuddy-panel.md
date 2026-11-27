@@ -3,11 +3,11 @@ title: Bambuddy Panel
 description: Per-printer touch panel for Bambuddy on inexpensive ESP32 touch displays
 ---
 
-A small touch panel that sits next to a printer and shows what Bambuddy knows about it, with the few actions you want while standing there. One panel per printer. It runs on the inexpensive ESP32-2432S028R ("Cheap Yellow Display") and talks only to your Bambuddy server over WiFi &mdash; never to the printer or to any cloud &mdash;. Available status fields and controls depend on the printer and Bambuddy version.
+A small touch panel that sits next to a printer and shows what Bambuddy knows about it, with the few actions you want while standing there. One panel per printer. It runs on the inexpensive ESP32-2432S028R ("Cheap Yellow Display") and talks only to your Bambuddy server over WiFi, never to the printer or to any cloud. Available status fields and controls depend on the printer and Bambuddy version.
 
 The screen follows the printer's state: progress, time left, layer and temperatures while printing; the *Ask for outcome* question with a thumbs up / thumbs down when a print finishes; **Plate is clear** when Bambuddy waits for it; the next queued jobs, and why the first one is waiting, when idle. Start, Stop, Resume queue and Plate is clear require a 1.5-second hold. Pause and Resume take one tap.
 
-![A minute with the panel: starting a queued job, the print, the outcome question, clearing the plate, assigning a spool, maintenance, an error](/assets/bambuddy-panel-demo.gif)
+![A minute with the panel: starting a queued job, the print, the outcome question, clearing the plate, assigning a spool, maintenance, an error](../assets/bambuddy-panel-demo.gif)
 
 *A minute with the panel, recorded from its desktop simulator with a made-up printer.*
 
@@ -56,7 +56,7 @@ Later releases go on without USB: the settings page takes the new firmware file,
 
 ## How it talks to Bambuddy
 
-Bambuddy Panel uses Bambuddy's [REST API](../reference/api.md), authenticated with an [API key](../features/api-keys.md) in the `X-API-Key` header. It polls the printer's status, its queue and its last archive in a round with a four-second wait after completion, and maintenance, settings and spool assignments once a minute. The panel uses versioned REST routes, including ones absent from the wiki reference. The documentation lists [every request it makes](https://github.com/loidolt/bambuddy-panel/blob/main/docs/api.md).
+Bambuddy Panel uses Bambuddy's [REST API](../reference/api.md), authenticated with an [API key](../features/api-keys.md) in the `X-API-Key` header. It polls the printer's status, its queue and its last archive in a round with a four-second wait after completion, and maintenance, settings and spool assignments once a minute. Every route it calls is part of Bambuddy's `/api/v1` REST API as published in its OpenAPI schema (checked against 1.3.2); none is an internal endpoint. The documentation lists [every request it makes](https://github.com/loidolt/bambuddy-panel/blob/main/docs/api.md).
 
 The connection is plain HTTP on your LAN, and the key is stored unencrypted in the panel's flash. Give the key only the permissions above and delete it in Bambuddy if a panel goes missing.
 
