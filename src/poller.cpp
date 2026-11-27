@@ -72,7 +72,9 @@ void poll_once(Poller &p, Snapshot &s, FetchFn fetch, void *ctx)
     s.verdictPending = false;
     s.lastPrintKnown = false;
     s.archiveId = s.runId = 0;
-    if (fetch("/api/v1/archives/last-per-printer", doc, filter, ctx) == 200) {
+    // The newest finished run of this printer alone, not every printer's last archive.
+    snprintf(path, sizeof(path), "/api/v1/print-log/?printer_id=%d&limit=1", p.printerId);
+    if (fetch(path, doc, filter, ctx) == 200) {
       parse_last_print(doc, p.printerId, s);
       if (s.verdictPending && s.archiveId == p.refusedArchive && s.runId == p.refusedRun) s.verdictPending = false;
     }

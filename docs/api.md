@@ -16,7 +16,7 @@ wakes the worker early.
 | During setup | `/printers/` | Suggest up to 16 visible printers |
 | On save and each poll | `/printers/{id}/status` | Check the selected printer and read its state |
 | Each successful status poll | `/queue/?status=pending,skipped,printing&printer_id={id}` | Read waiting, held and starting jobs |
-| Outside preparing, slicing, printing and paused states | `/archives/last-per-printer` | Find the last print and any pending outcome question |
+| Outside preparing, slicing, printing and paused states | `/print-log/?printer_id={id}&limit=1` | Read the printer’s last finished print (its run) and any pending outcome question |
 | At startup and about every 60 seconds | `/maintenance/printers/{id}` | Read maintenance tasks |
 | At startup and about every 60 seconds | `/settings/` | Read `require_plate_clear` |
 | When the printer reports slots, about every 60 seconds | `/inventory/assignments?printer_id={id}` | Match slots to inventory spools |

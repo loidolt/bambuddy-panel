@@ -316,26 +316,34 @@ void parse_queue(JsonDocument &doc, int printerId, Snapshot &s)
 
 void last_print_filter(JsonDocument &filter)
 {
-  for (const char *k : {"id", "printer_id", "run_id", "status", "confirm_requested", "user_verdict"})
-    filter[0][k] = true;
+  for (const char *k : {"id", "archive_id", "printer_id", "status", "confirm_requested", "user_verdict"})
+    filter["items"][0][k] = true;
+  filter["deleted_archive_ids"] = true;
 }
 
 void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s)
 {
-  s.lastPrintKnown = doc.is<JsonArrayConst>();
+  // The printer's newest run, as the print log lists it: the print's own status and verdict.
+  // Bambuddy's archive carries copies of them that it is retiring. A print still under way is
+  // not in the log.
+  JsonArrayConst runs = doc["items"];
+  s.lastPrintKnown = !runs.isNull();
   s.verdictPending = false;
   s.archiveId = 0;
   s.runId = 0;
-  for (JsonObject a : doc.as<JsonArray>()) {
-    if ((a["printer_id"] | 0) != printerId) continue;
-    s.archiveId = a["id"] | 0;
-    s.runId = a["run_id"] | 0;
-    // As Bambuddy's own printer card: a finished print that asked, and nobody has answered yet
-    // (here, in Bambuddy, or from a notification). Failed and cancelled prints are not asked.
-    const char *status = a["status"] | "";
-    s.verdictPending = s.archiveId > 0 && s.runId > 0 && strcmp(status, "completed") == 0 && (a["confirm_requested"] | false) &&
-                       a["user_verdict"].isNull();
-  }
+  JsonObjectConst run = runs[0];
+  // Asked for this printer only; anything else is not an answer to that.
+  if (run.isNull() || (run["printer_id"] | 0) != printerId) return;
+  s.runId = run["id"] | 0;
+  s.archiveId = run["archive_id"] | 0;
+  // The answer is sent to the archive: a run whose archive is deleted has nowhere to take it.
+  for (JsonVariantConst gone : doc["deleted_archive_ids"].as<JsonArrayConst>())
+    if ((gone | 0) == s.archiveId) s.archiveId = 0;
+  // As Bambuddy's own printer card: a finished print that asked, and nobody has answered yet
+  // (here, in Bambuddy, or from a notification). Failed and cancelled prints are not asked.
+  const char *status = run["status"] | "";
+  s.verdictPending = s.archiveId > 0 && s.runId > 0 && strcmp(status, "completed") == 0 && (run["confirm_requested"] | false) &&
+                     run["user_verdict"].isNull();
 }
 
 void tasks_filter(JsonDocument &filter)
