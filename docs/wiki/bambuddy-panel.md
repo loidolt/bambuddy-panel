@@ -64,6 +64,6 @@ The connection is plain HTTP on your LAN, and the key is stored unencrypted in t
 
 ## Support
 
-Issues, feature requests and questions about the panel belong on the [project's GitHub repository](https://github.com/loidolt/bambuddy-panel/issues). The Bambuddy team doesn't maintain Bambuddy Panel and can't ship fixes for it.
+For panel issues, feature requests and questions, visit the [panel project on GitHub](https://github.com/loidolt/bambuddy-panel/issues).
 
 For Bambuddy-side questions (API key setup, permissions, etc.), the [Discord](https://discord.gg/aFS3ZfScHM) is the right place to ask.

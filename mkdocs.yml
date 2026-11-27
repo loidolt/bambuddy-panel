@@ -2,13 +2,11 @@
 # Pages are the Markdown files in docs/. To look at it locally:
 #   pip install -r requirements-docs.txt && mkdocs serve
 site_name: Bambuddy Panel
-site_description: A per-printer touch panel for Bambuddy on inexpensive ESP32 touch displays
+site_description: Setup and usage guides for an ESP32 touchscreen that displays printer status and queue information from Bambuddy
 site_url: https://loidolt.github.io/bambuddy-panel/
 repo_url: https://github.com/loidolt/bambuddy-panel
 repo_name: loidolt/bambuddy-panel
 edit_uri: edit/main/docs/
-copyright: >-
-  MIT licensed. An independent community project, not part of, or endorsed by, Bambuddy or Bambu Lab.
 
 # What is in docs/ but not part of the site: working notes, and the page written for
 # Bambuddy's own wiki (its links only work there).
@@ -31,8 +29,6 @@ nav:
       - How it talks to Bambuddy: api.md
   - Development: development.md
 
-# Colours, layout and features follow Bambuddy's own documentation (wiki.bambuddy.cool); the
-# colours themselves are in docs/stylesheets/extra.css.
 theme:
   name: material
   font: false # system fonts: nothing is fetched from a font service
@@ -42,23 +38,21 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: green
-      accent: light green
+      primary: blue grey
+      accent: indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: green
-      accent: light green
+      primary: blue grey
+      accent: indigo
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
   features:
     - content.action.edit
     - content.code.copy
-    - navigation.tabs
-    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.path

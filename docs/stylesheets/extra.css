@@ -23,157 +23,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-:root {
-  --md-primary-fg-color: #00ae42;
-  --md-primary-fg-color--light: #4cda6e;
-  --md-primary-fg-color--dark: #008031;
-  --md-accent-fg-color: #00ae42;
-}
-
-.md-typeset {
-  color: var(--md-typeset-color);
-}
-
-[data-md-color-scheme="slate"] {
-  --md-default-bg-color: #1a1a2e;
-  --md-default-fg-color: rgba(255, 255, 255, 0.95);
-  --md-default-fg-color--light: rgba(255, 255, 255, 0.75);
-  --md-typeset-color: rgba(255, 255, 255, 0.92);
-  --md-typeset-a-color: #00ae42;
-}
-
-[data-md-color-scheme="default"] {
-  --md-default-bg-color: #ffffff;
-  --md-default-fg-color: rgba(0, 0, 0, 0.87);
-  --md-typeset-color: rgba(0, 0, 0, 0.87);
-  --md-typeset-a-color: #00ae42;
-}
-
-.md-nav__link {
-  font-size: 0.8rem;
-}
-
-/* The top of the home page: words on the left, the film on the right. */
-.md-typeset .hero {
+.md-typeset .panel-overview {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-  align-items: center;
-  margin: 2rem 0 3rem;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+  margin: 1.5rem 0;
 }
 
-.md-typeset .hero h1 {
-  font-size: 2.5rem;
-  font-weight: 700;
-  margin-bottom: 1rem;
-  background: linear-gradient(135deg, #00ae42, #4cda6e);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* The heading's link mark would take the heading's see-through fill and show all the time. */
-.md-typeset .hero h1 .headerlink {
-  display: none;
-}
-
-.md-typeset .hero p {
-  font-size: 1.1rem;
-  color: var(--md-typeset-color);
-}
-
-.md-typeset .hero video {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-}
-
-/* Cards */
-.md-typeset .feature-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1.5rem;
-  margin: 2rem 0;
-}
-
-.md-typeset .feature-card {
-  background: var(--md-code-bg-color);
-  border-radius: 12px;
-  padding: 1.5rem;
-  border: 1px solid var(--md-typeset-table-color);
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.md-typeset .feature-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
-}
-
-.md-typeset .feature-card h3 {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.md-typeset .panel-overview h2 {
   margin-top: 0;
-  font-size: 1.1rem;
-  color: var(--md-typeset-color);
 }
 
-.md-typeset .feature-card p {
-  margin-bottom: 0;
-  font-size: 0.9rem;
-  color: var(--md-typeset-color);
+.md-typeset .panel-overview figure {
+  margin: 0 auto;
+  max-width: 344px;
 }
 
-/* Buttons */
-.md-typeset .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
-  font-weight: 600;
-  text-decoration: none;
-  margin: 0.25rem 0.5rem 0.25rem 0; /* so two that wrap onto two lines don't touch */
-  transition: transform 0.2s, box-shadow 0.2s;
+@media (min-width: 44em) {
+  .md-typeset .panel-overview {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+.md-typeset .panel-demo {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
 }
 
-.md-typeset .btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.md-typeset .btn-primary,
-.md-typeset .btn-primary:hover {
-  background: var(--md-primary-fg-color);
-  color: white;
-}
-
-.md-typeset .btn-secondary {
-  background: var(--md-code-bg-color);
-  color: var(--md-typeset-color);
-  border: 2px solid var(--md-typeset-table-color);
-}
-
-/* Screenshots of the panel: rounded, lifted off the page, and never stretched, since they
-   are pictures of a 320x240 screen. */
 .md-typeset img.screenshot {
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-}
-
-@media (max-width: 768px) {
-  .md-typeset .hero {
-    grid-template-columns: 1fr;
-    text-align: center;
-  }
-
-  .md-typeset .hero h1 {
-    font-size: 1.8rem;
-  }
-
-  .md-typeset .feature-grid {
-    grid-template-columns: 1fr;
-  }
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
 }

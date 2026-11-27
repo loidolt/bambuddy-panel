@@ -1,101 +1,88 @@
 # Get started
 
-A board, a firmware file, an API key from Bambuddy, and a few minutes at the panel.
-
 ## What you need
 
-Written for the ESP32-2432S028R: ESP32-WROOM, 2.8" 320x240 display, resistive touch, no PSRAM.
-Sold under many names. Two display chips are common and both are supported:
-
-| Variant | Build |
-|---|---|
-| ST7789 display (often the board with two USB ports) | `cyd-st7789` (default); the one build that has run on its board |
-| ILI9341 display (often the board with one USB port) | `cyd-ili9341`; not flashed yet |
-
-The USB ports are only a hint; sellers mix them. If the picture stays white or garbled, try the
-other build.
-
-Power it from any 5 V USB supply.
-
-Its relatives with 2.4", 3.2" and 3.5" screens have builds too, none of them tried on its board
-yet: see [Boards](boards.md).
-
-You also need a USB cable that carries data, and a running Bambuddy that the panel can reach
-over WiFi by `http://`.
+You’ll need a [board with a firmware profile](boards.md), a 5 V USB supply, a USB **data** cable,
+and a computer to flash the board. Have a phone or computer handy for setup. The panel needs a 2.4
+GHz WiFi network from which it can reach the Bambuddy server over HTTP.
 
 ## Flash the firmware
 
-Build from source using [Development](development.md#build-and-flash) until the first release is available. Each [release](https://github.com/loidolt/bambuddy-panel/releases) is packaged by [board profile](boards.md). For a board that doesn't run Bambuddy Panel yet, take your
-build's `-full.bin` and write it at address 0x0, with [esptool](https://docs.espressif.com/projects/esptool/)
-(`pip install esptool`):
+**From source.** Install PlatformIO Core and follow
+[Build and flash](development.md#build-and-flash). Use this route if there is no published firmware
+file for your board. For an ESP32-2432S028R, check whether the display uses an ST7789 or an ILI9341
+controller. The two variants need different builds.
+
+**From a published release.** If the
+[releases page](https://github.com/loidolt/bambuddy-panel/releases) has firmware for your board,
+download the matching `-full.bin` and `SHA256SUMS.txt`. Compare the file’s
+[SHA-256 checksum](updating.md#verify-a-download), then connect the board and write the full image
+at address `0x0` with
+[esptool v5](https://docs.espressif.com/projects/esptool/en/latest/esp32/installation.html). Replace
+the example filename with your download’s name.
 
 ```bash
-esptool --chip esp32 write-flash 0x0 bambuddy-panel-0.1.0-cyd-st7789-full.bin
+esptool --chip esp32 write-flash 0x0 "your-board-full.bin"
 ```
 
-Any other ESP32 flashing tool does as well, as long as it writes the file at 0x0. A `-full.bin`
-also clears the panel's settings and touch calibration.
+Writing the full image erases saved WiFi, Bambuddy settings and touch calibration. For an existing
+panel, [update from its settings page](updating.md) to keep them.
 
-To build it yourself instead, see [Development](development.md#build-and-flash). For a later
-release, see [Updating](updating.md): that needs no USB.
+## Create an API key
+
+In Bambuddy, open **Settings → API Keys** and create a dedicated key. For a display-only panel,
+select **Read Status** and clear the other scopes. Enable additional scopes for the actions you want
+at this printer.
+
+| Key scope | What the panel can request |
+|---|---|
+| Read Status | Read printer status, queue, print history, settings, maintenance and spool inventory |
+| Control Printer | Pause, resume, stop, confirm plate clear or clear a printer error |
+| Manage Queue | Start a staged job or resume held jobs |
+| Manage Archives | Record a print outcome |
+| Manage Maintenance | Mark a maintenance task done |
+| Manage Inventory | Assign a spool to a slot or remove its assignment |
+
+The key also inherits its owner’s access. Starting someone else’s job requires permission to manage
+all queue jobs, and review restrictions still apply. Resuming the queue requires permission to
+manage all jobs. Recording an outcome for someone else’s print requires permission to edit all
+archives.
+
+To restrict the key to one printer in Bambuddy 1.3.2, an administrator can use
+`PATCH /api/v1/api-keys/{key_id}` with, for example, `{"printer_ids": [3]}` for printer 3. The panel
+stores the key in flash and uses it over plain HTTP. See [Security](security.md).
 
 ## Set up a panel
 
-1. In Bambuddy, Settings > API keys, create a key for this panel. Bambuddy ticks most
-    permissions for a new key; untick everything the table doesn't list.
+1. **Calibrate touch if prompted.** On a new resistive panel, press each of the four crosses
+   steadily and lift your finger between them. Capacitive panels skip this step.
+2. **Join the panel’s setup network.** Scan the first QR code or join `BambuddyPanel-Setup` using
+   the password on the screen. Choose your WiFi network and enter its password. If the network
+   chooser doesn’t open, visit `http://192.168.4.1` while connected to the panel.
+3. **Open the panel’s settings.** Once the panel joins your WiFi, connect your phone or computer to
+   that network. Scan the second QR code, or open the panel address on the screen and enter the code
+   beside it.
+4. **Connect to Bambuddy.** Enter the server’s LAN address, for example `http://192.168.1.50:3700`,
+   and paste the API key. Choose your printer from the suggestions or enter its numeric Bambuddy ID.
+   The panel lists up to 16 printers visible to the key.
+5. **Select Save.** The panel checks the printer’s status and starts displaying it. If the server is
+   temporarily unreachable or returns a server error, **Use these settings anyway** saves the values
+   for a later connection. For an invalid key or printer ID, correct the indicated field and save
+   again.
 
-    | Permission | Needed for |
-    |---|---|
-    | Read Status | Everything shown |
-    | Control Printer | Pause, resume, stop, plate is clear, clear error |
-    | Manage Queue | Start the next job, resume the queue |
-    | Manage Archives (optional) | Answering the outcome question |
-    | Manage Maintenance (optional) | Marking maintenance tasks done |
-    | Manage Inventory (optional) | Assigning a spool to a slot, or taking it out |
+## Reopen settings
 
-    A key never does more than the user who owns it may do. In particular:
+On the panel, tap the wrench to open **Maintenance**, then press **Hold for settings** until the bar
+fills. The panel restarts into setup and displays a new code. Connection error screens also offer
+**Open settings**.
 
-    - **Resume queue** needs an owner who may manage *all* queue jobs.
-    - **Start** works on the owner's own jobs, or on anyone's if the owner may manage all queue
-      jobs. Jobs waiting for review need someone who may start unreviewed jobs.
-    - **Answering the outcome question** works on the owner's own prints, or on anyone's if the
-      owner may edit all archives.
+- **Change the printer, key or server** in the browser. Leave the key blank to reuse it with the
+  same address. Enter the key again when changing the address.
+- **Change WiFi** in the browser forgets the saved network and restarts WiFi setup.
+- **Calibrate touch** on the panel starts calibration on resistive boards. **Cancel** on the panel
+  discards unsaved connection edits.
 
-    An access denial identifies the relevant permission. Check both the key scope and its owner’s access to that printer or record.
-
-    Bambuddy's settings page can't limit a key to one printer (1.3.x); its API can, with
-    `PATCH /api/v1/api-keys/{key_id}` and the body `{"printer_ids": [<printer id>]}`.
-2. You don't need to look up the printer's id: the panel's settings page lists the printers
-    the key may see. (By hand: `GET /api/v1/printers/` lists each printer with its `id`.)
-3. Power the panel. A resistive panel first asks you to tap four crosses for calibration. A panel without saved WiFi opens the setup network `BambuddyPanel-Setup` and shows a QR code for it, with its name and
-    password beside it. Scan the code with a phone, or join the network by hand, and choose
-    your WiFi in the page that opens (or open `192.168.4.1`). That page asks for the WiFi only.
-4. Once it's on your WiFi, the panel shows a second QR code, with its address and a code beside
-    it, e.g. `192.168.1.80` and `abcd-efgh`. Scan it, or open that address in any browser on the
-    same network and type the code. Enter the Bambuddy URL (`http://host:port`; https isn't
-    supported) and the API key. With those in, the page tries the key with Bambuddy, without
-    saving, and suggests up to 16 printers. You can also enter the printer id directly. The page
-    also explains which permissions the key needs. It's an ordinary web page, so you can switch
-    away to copy the key and come back. **Save** checks the settings with Bambuddy straight away
-    and says what's wrong if it doesn't accept them (or, if Bambuddy is only down for now, **Use
-    these settings anyway**).
-
-To change settings later, open the maintenance screen (the wrench) and press **Hold for settings** until the bar fills. The
-panel restarts into its settings screen, with a new code. From there:
-
-- the settings page again (leave the key blank to keep the saved one; with a new Bambuddy URL
-  the key has to be entered again). It has a **Change WiFi** button, which forgets the WiFi and
-  restarts into the setup network. If the saved WiFi can't be joined, the setup network opens
-  instead.
-- **Calibrate touch**, on panels with resistive touch
-- **Cancel**, back to normal running with nothing changed
-
-When Bambuddy refuses the key or can't be reached for five minutes, the screen that says so
-has an **Open settings** button that does the same.
-
-If the touch is too far off to press anything, touch the screen while it says "Starting", just
-after power-on: let go when asked for the settings screen, or keep holding about four seconds
-for touch calibration.
-
-The settings page and the setup network only open on a new panel or when asked for in one of
-these ways. If the WiFi is down when a panel that's set up starts, it says so and keeps trying.
+If touch is misaligned or your WiFi has changed, touch the screen during **Starting** at power-on.
+On a resistive panel, release when prompted for settings, or keep holding for four seconds to
+recalibrate. A capacitive panel goes straight to settings. If the saved WiFi is unreachable during
+setup, the panel opens its setup network.

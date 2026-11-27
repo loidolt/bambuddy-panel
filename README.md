@@ -1,104 +1,46 @@
 # Bambuddy Panel
 
-A small touch panel that sits next to a 3D printer and shows what
-[Bambuddy](https://github.com/maziggy/bambuddy) knows about it, with the few actions you want
-while standing there. No phone, no browser tab.
+Bambuddy Panel shows one printer’s status and queue on an ESP32 touchscreen. It connects to your
+[Bambuddy server](https://github.com/maziggy/bambuddy) over WiFi.
 
-One panel per printer. It runs on the inexpensive ESP32-2432S028R ("Cheap Yellow Display") and
-talks only to your Bambuddy server over WiFi, never to the printer or to any cloud. Available status fields and controls depend on the printer and Bambuddy version.
+While a print runs, the panel shows progress, time remaining and temperatures. At the printer you
+can pause or resume a job, record a print outcome, confirm plate clearance, assign an inventory
+spool or mark maintenance done. Available actions depend on the printer, Bambuddy settings and API
+key permissions.
 
-![A minute with the panel: starting a queued job, the print, the outcome question, clearing the plate, assigning a spool, maintenance, an error](docs/demo.gif)
+![Simulator walkthrough of a queued print, plate clearance, filament assignment and maintenance](docs/demo.gif)
 
-*A minute with the panel, from the simulator: the panel's own screens, a made-up printer. The
-dot is a finger, the lamp under the screen is the LED on the board's back.*
+## Installation and documentation
 
-| Printing | Print finished | Outcome question | Maintenance |
-|---|---|---|---|
-| ![Printing](docs/screenshots/printing.png) | ![Finished](docs/screenshots/finished.png) | ![Outcome](docs/screenshots/verdict.png) | ![Maintenance](docs/screenshots/maintenance.png) |
+The ESP32-2432S028R with an ST7789 display (`cyd-st7789`) has hardware test coverage for the
+display, touch calibration, backlight, WiFi and Bambuddy setup, printer status and filament slots.
+The other nine board profiles have compile checks only. Some printer commands still await end-to-end
+testing.
 
-*Screenshots are from the simulator, at the panel's real 320x240.*
+1. [Identify your board and display controller](docs/boards.md). The ESP32-2432S028R comes in two
+   variants that use different firmware.
+2. [Flash and configure the panel](docs/get-started.md) with a USB data cable, a 2.4 GHz WiFi
+   network and a Bambuddy API key. PlatformIO can install the firmware from source.
+3. [Use the panel](docs/using.md) or [update an installed panel](docs/updating.md) over WiFi.
 
-> **Status: early.** It runs on one board, the ESP32-2432S028R with the ST7789 display
-> (`cyd-st7789`): display, touch calibration, WiFi and Bambuddy setup, status, and the filament
-> slots of a real printer. The buttons' commands (pause, stop, plate is clear, start and the
-> rest) are checked by native request tests, but **have not all been pressed
-> against a real Bambuddy yet**, and no other board has been flashed. Expect rough edges until
-> this note goes away.
+The [documentation site](https://loidolt.github.io/bambuddy-panel/) also covers
+[troubleshooting](docs/troubleshooting.md), [security](docs/security.md) and the
+[Bambuddy API calls](docs/api.md).
 
-## What it does
+## Development and support
 
-The panel offers what only Bambuddy can do, and the few printer controls that are slow to reach
-on a printer's own screen:
+With PlatformIO installed, run `pio test -e test` for the native tests. The desktop simulator needs
+SDL2 and libcurl. Start it with `pio run -e sim -t exec` to explore the screens with sample data.
 
-- Pause, resume and stop a print.
-- **Plate is clear** releases the plate gate. Bambuddy decides when a queued job can start.
-- Bambuddy's *Ask for outcome* question, with a thumbs up or down.
-- Start a job that waits for a manual start; resume a queue held after a failed print.
-- The printer's error in words, and clearing it.
-- The filament slots, and assigning a spool of Bambuddy's inventory to one.
-- Maintenance tasks, most urgent first, and marking them done.
-- An LED on the back that blinks when someone should come over.
+For build instructions, screenshots or new board profiles, see the
+[development guide](docs/development.md) and [board contributor guide](boards/README.md).
 
-Start, Stop, Resume queue and Plate is clear require a 1.5-second hold. Pause and Resume take one tap. [Every screen and button](docs/using.md).
-
-## Documentation
-
-Read the guides in this checkout or on GitHub.
-
-| | |
-|---|---|
-| [Get started](docs/get-started.md) | What to buy, flashing, the API key and its permissions, setup |
-| [Using the panel](docs/using.md) | What each screen shows and what its buttons do |
-| [Updating](docs/updating.md) | A new release onto a panel, without USB |
-| [Boards](docs/boards.md) | Which boards have a build, and which have been tried |
-| [Troubleshooting](docs/troubleshooting.md) | A wrong picture, a touch that is off, no answer from Bambuddy |
-| [Security](docs/security.md) | Where the API key is, and who can change what |
-| [How it talks to Bambuddy](docs/api.md) | Every request it makes |
-| [Development](docs/development.md) | Building, the simulator, the tests, the layout of the source |
-
-## Quick start
-
-1. Get an ESP32-2432S028R ("Cheap Yellow Display": ESP32, 2.8" 320x240 resistive touch) and a
-   5 V USB supply. [Other boards](docs/boards.md) have builds too, none of them tried yet.
-2. Build from source using the [development guide](docs/development.md), or use a matching file when a release is available. `cyd-st7789` is for the board with the ST7789 display
-   (often the one with two USB ports), `cyd-ili9341` for the other:
-
-   ```bash
-   esptool --chip esp32 write-flash 0x0 bambuddy-panel-0.1.0-cyd-st7789-full.bin
-   ```
-
-3. In Bambuddy, create an API key with **Read Status**, **Control Printer** and **Manage
-   Queue**; the [optional ones](docs/get-started.md#set-up-a-panel) are for the outcome
-   question, maintenance and spools.
-4. Power the panel. Tap the four crosses, scan the QR code it shows and choose your WiFi.
-5. Scan the second QR code, and enter the Bambuddy URL (`http://host:port`) and the key. The
-   page lists the printers the key may see: pick this panel's.
-
-Later releases go on [without USB](docs/updating.md), from the panel's settings page.
-
-## Development
-
-Needs [PlatformIO](https://platformio.org/install/cli); the simulator also needs SDL2.
-
-```bash
-pio run -t upload
-```
-
-```bash
-pio test -e test
-```
-
-```bash
-pio run -e sim -t exec
-```
-
-The simulator runs the panel's own screens in a window on the desktop, with made-up printer
-states or a real Bambuddy read-only, and makes the screenshots and the film on this page.
-[More](docs/development.md). To add a board: [boards/README.md](boards/README.md).
+Bambuddy Panel is an independent community project. Report panel issues in
+[this repository](https://github.com/loidolt/bambuddy-panel/issues/new/choose). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for patch and hardware reports and [SECURITY.md](SECURITY.md) for
+private reports.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Icons and libraries: [THIRD_PARTY.md](THIRD_PARTY.md).
-
-Bambuddy Panel is an independent community project. It is not part of, or endorsed by, Bambuddy
-or Bambu Lab.
+Panel code is available under the [MIT license](LICENSE). Bundled icons and libraries have their own
+[licenses and credits](THIRD_PARTY.md).

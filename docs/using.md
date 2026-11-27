@@ -1,73 +1,81 @@
 # Using the panel
 
-The panel offers what only Bambuddy can do, and the few printer controls that are slow to reach
-on a printer's own screen. Everything else (temperatures to set, speed, the light, the AMS) is
-left to the printer.
+The status label in the header names the current state. **Tap** a button for an immediate action.
+**Hold** buttons fill over 1.5 seconds and act when full. Release early to cancel. Use the printer’s
+own controls to set temperatures, change print speed or operate its light.
 
-The screen follows the printer's state. A chip in the corner names it; the buttons are what
-can be done about it:
+## Status and controls
 
-| State | The screen shows | Buttons |
-|---|---|---|
-| Preparing | The stage it is at ("Auto bed leveling") | Pause, Stop (hold) |
-| Printing | Progress, time left, layer, temperatures, what is next | Pause, Stop (hold) |
-| Paused | Where it paused, and the error if there is one | Resume, Stop (hold) |
-| Finished, and the print was started with *Ask for outcome* | "How did it print?" | Thumbs up, Thumbs down, Skip |
-| Finished or failed, plate not yet cleared, and Bambuddy's *Require plate clear* is on | The result and up to two queued jobs | Plate is clear (hold) |
-| Error | The error's text; with several, a tap shows the next | Clear error |
-| Ready: the next job for this printer waits for a manual start | The job, how long it takes, who queued it, and why Bambuddy holds it back if it does | Start (hold) |
-| Queue held: Bambuddy held jobs back because a print failed | How many | Resume queue (hold) |
-| Idle | The next three jobs, and what the first is waiting for | none |
+| Screen | What you can do |
+|---|---|
+| **Starting** | Wait while Bambuddy sends the queued job to the printer. |
+| **Preparing** or **Printing** | Tap **Pause** or hold to stop. Preparing shows the current stage. Printing shows progress, time left and, when available, layer and temperatures. |
+| **Paused** | Read any reported error. Tap **Resume** or hold to stop. |
+| **Finished** with “How did it print?” | Tap thumbs up, thumbs down or **Skip**. |
+| **Finished** or **Failed** with a plate prompt | Remove the print, check the plate, then hold to confirm it is clear. |
+| **Ready** | Check the job name and any reason Bambuddy gives for waiting. Hold to start the staged job. |
+| **Queue held** | Hold to resume jobs that Bambuddy skipped after a failed or aborted print. This action can also appear on **Ready** and **Error**. |
+| **Error** | Tap the error text to cycle through up to three messages. Tap **Clear error** to request a clear after addressing the cause. |
+| **Idle** | See up to three queued jobs and why the first is waiting. Bambuddy picks the printer for jobs queued to any printer of a model. |
+| **Printer offline** | Bambuddy is reachable but has lost contact with the printer. Check the printer’s power and connection. |
 
-A **Resume queue** button also joins Error and Ready when jobs are held.
+![Printing progress, remaining time and controls](screenshots/printing.png){ .screenshot }
+![Paused print with a printer error](screenshots/paused-error.png){ .screenshot }
 
-- **Hold** buttons fill from the left over 1.5 seconds and act when full; letting go early does
-  nothing. Pause, Resume, Clear error and the outcome buttons are taps.
-- A pressed button says what is under way ("Stopping...") and further writes wait for the reply and another status poll. A command that fails says why in a red band across the top,
-  which stays six seconds or until it is tapped: "Access denied (Manage Queue)", "Not enough
-  filament loaded".
-- The **outcome question** comes before "plate is clear" on purpose: Bambuddy can be set to
-  record an unanswered print as good when the plate is cleared. It is asked, as on Bambuddy's own
-  printer card, only for prints that completed. **Skip** passes it for that print and goes on to
-  the plate; it can still be answered in Bambuddy. If the API key may not record the answer,
-  the panel says so once and stops asking.
-- **Plate is clear** is offered only when Bambuddy's *Require plate clear* setting is on (as in
-  Bambuddy's own UI), and also while the printer is switched off, as it is with Auto Power Off.
-  Clearing the plate releases one scheduling condition. Filament, review, timing or printer availability can still delay the next job.
-- **Start** is offered only for a job assigned to this printer. A job queued for "any X1C" shows
-  as waiting, with a line saying Bambuddy picks the printer.
-- The **spool** in the header opens the printer's filament slots: what the printer says is in
-  each, and which spool of Bambuddy's inventory is assigned to it, with what is left on it.
-  **Change** or **Assign** on a slot lists the inventory's spools, starting with the material
-  that is in the slot; the button at the top steps through the other materials. Hold **Assign**
-  on a spool to move its inventory assignment. Printer configuration can remain pending; hold **Remove** to take the slot's spool out.
-  The spool only shows for a printer that reports slots. This uses Bambuddy's own inventory;
-  Spoolman is not supported yet. The panel keeps up to 18 slots, two external holders and the first 150 inventory spools. Multi-nozzle and larger slot layouts can be incomplete.
-- The **wrench** in the header opens the printer's maintenance tasks, most urgent first. It
-  turns amber with a count when tasks are due and gets an amber outline when some are due
-  soon. Hold **Mark done** to mark a task performed. The list returns to the status screen
-  after a minute without a touch. Press **Hold for settings** for 1.5 seconds to open setup. A bar fills along the bottom edge as you hold.
-- On boards fitted with an RGB **LED**, it blinks when someone should come over: cyan for the outcome question,
-  green for "clear the plate", yellow for paused or a held queue, red for an error, purple when
-  Bambuddy can't be reached. Solid blue while preparing, sending or printing.
-- The **backlight** dims to about a third after a minute without a touch while nothing wants
-  anyone (printing, idle, printer offline). The first touch on a dimmed screen only brightens it.
-- **Error** means what Bambuddy's own printer card counts as a problem. Notices the printer
-  keeps for a whole print ("the top cover is open") and codes Bambu publishes no text for are
-  left out, as they are there.
-- One request Bambuddy doesn't answer greys the chip: what is on screen may be a few seconds
-  old. From the second in a row a red band says for how long there has been no answer, the
-  last status stays under it, and printer controls are disabled. Local navigation and setup remain available. After five minutes, or at once when
-  Bambuddy refuses the key or the address can't work, a screen says why and offers
-  **Open settings**.
-- The panel's fonts only have plain ASCII, so names are shown without accents (*Jürgen* becomes
-  *Jurgen*); other scripts show as `?`.
+The panel sends one action at a time. It checks that the job, slot or task still matches what you
+selected, then reads status again after the request. If the screen says **Status changed**, check
+the new state before retrying. A red message identifies a failed request and stays visible for six
+seconds or until tapped.
 
-## More screens
+## Print outcomes and the queue
 
-| Idle | Paused with an error | Print failed |
-|---|---|---|
-| ![Idle](screenshots/idle.png){ .screenshot } | ![Paused with an error](screenshots/paused-error.png){ .screenshot } | ![Failed](screenshots/failed.png){ .screenshot } |
+The outcome question appears for a completed, unanswered print for which **Ask for outcome** was
+enabled. **Skip** dismisses the question locally for that run. A permission denial also suppresses
+the prompt for that run. Bambuddy can count unanswered outcomes as good when the plate is released,
+so record the outcome before clearing the plate if you want it counted a particular way.
 
-Settings, and how to get back into them, are under
-[Get started](get-started.md#set-up-a-panel).
+**Plate is clear** appears when Bambuddy is waiting for confirmation and
+**Require plate-clear confirmation** is enabled. It can appear even after the printer powers off.
+Releasing the plate allows Bambuddy to consider the next job. Filament, review, timing or printer
+availability can still delay it. **Hold to start** applies to a manual-start job assigned to this
+printer.
+
+![Thumbs up, thumbs down and Skip after a completed print](screenshots/verdict.png){ .screenshot }
+![Finished print awaiting plate confirmation](screenshots/finished.png){ .screenshot }
+
+## Filament and maintenance
+
+Tap the **spool** to see the reported filament in each slot, its assigned inventory spool and the
+remaining weight when known. Tap **Change** or **Assign** beside a slot. The material button cycles
+through filters, including **All types**. Hold **Assign** beside a spool to move its assignment to
+this slot. Hold **Remove** to clear the inventory assignment. Use the printer’s controls to load or
+unload the physical filament. The inventory change can succeed while the printer’s tray
+configuration is still pending.
+
+The spool icon appears on printers that report slots. The panel uses Bambuddy’s built-in inventory.
+Spoolman integration is unavailable. It shows up to 18 slots in total, including up to two external
+holders, and the first 150 inventory spools. Larger or multi-nozzle layouts may be incomplete.
+
+Tap the **wrench** to see up to 12 enabled maintenance tasks, most urgent first. An amber outline
+means tasks are due soon. A filled amber badge means at least one is due. After performing a task,
+hold **Mark done** to record it. Press **Hold for settings** until the bar fills to
+[reopen setup](get-started.md#reopen-settings). Both the filament and maintenance screens return to
+status after a minute of inactivity.
+
+## LED and backlight
+
+On boards with an RGB LED, solid blue means a job is starting, preparing or printing. A blinking LED
+indicates a state you may need to act on.
+
+| Blinking colour | Meaning |
+|---|---|
+| Cyan | A print is waiting for an outcome |
+| Green | The plate needs clearing |
+| Yellow | The print is paused or the queue is held |
+| Red | The panel is on the Error screen |
+| Purple | The panel has lost contact with Bambuddy or needs its connection settings checked |
+
+On boards with a dimmable backlight, the status screen drops to 35% brightness after a minute of
+inactivity while starting, preparing, printing, idle or showing a disconnected printer. The first
+touch wakes it. For a grey status label, missing button or connection warning, see
+[Troubleshooting](troubleshooting.md).

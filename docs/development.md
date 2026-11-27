@@ -1,95 +1,64 @@
 # Development
 
-The source is at [github.com/loidolt/bambuddy-panel](https://github.com/loidolt/bambuddy-panel).
-
 ## Build and flash
 
-Needs [PlatformIO](https://platformio.org/install/cli).
+Install [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html). CI
+uses PlatformIO 6.2.0. Clone the panel repository and run the commands from its root.
 
 ```bash
-pio run -t upload
+git clone https://github.com/loidolt/bambuddy-panel.git
+cd bambuddy-panel
+pio run -e cyd-st7789
 ```
+
+Replace `cyd-st7789` with the [profile for your board](boards.md#available-profiles). Connect the
+board with a USB data cable and upload the build. The serial monitor runs at 115200 baud.
 
 ```bash
-pio run -e cyd-ili9341 -t upload
+pio run -e cyd-st7789 -t upload
+pio device monitor -b 115200
 ```
 
-```bash
-pio device monitor
-```
-
-The second line is for another board: the build names are in [Boards](boards.md), where there
-is also what to change [if the picture or the touch is wrong](boards.md#if-the-picture-or-the-touch-is-wrong).
-
-The serial monitor shows the firmware's version at start-up (`[boot] ...`) and, once a minute,
-the version, the free memory and the background task's spare stack (`[health] ...`), which
-helps when reporting a problem. The settings page has the version at its foot. A build of your
-own is version `dev`.
+If more than one board is attached, use `pio device list` to identify the port and add
+`--upload-port PORT` to the upload command. Once the board boots,
+[complete setup](get-started.md#set-up-a-panel). For an existing panel, you can also install the
+built application from `.pio/build/<profile>/firmware.bin` through its [settings page](updating.md).
 
 ## Simulator
 
-The panel's screens, its JSON reading, its requests and its polling round run on the desktop in
-a window the size of the panel's screen (320x240, shown at 2x), so screens can be worked on
-without flashing a board. Needs SDL2 and libcurl
-(macOS: `brew install sdl2`; Debian/Ubuntu: `apt install libsdl2-dev libcurl4-openssl-dev`).
+The desktop simulator runs the panel UI with SDL2 and uses libcurl for live reads. On macOS, install
+SDL2 with `brew install sdl2`. On Debian or Ubuntu, install `libsdl2-dev` and
+`libcurl4-openssl-dev`.
 
 ```bash
 pio run -e sim -t exec
 ```
 
-Left/Right switch between made-up printer states (`src/sim/scenarios.cpp`), the mouse is the
-finger, Q quits. Buttons change the made-up state and print the request the panel would send;
-nothing is sent anywhere. The window title shows the state name and the LED colour.
+The default window shows a 320×240 panel at 2× scale. Use the left and right arrows to change sample
+printer states, click or hold with the mouse, and press **Q** to quit. Button presses update the
+simulated state and print the request to the terminal.
 
-A PNG of every screen the panel can show, into `shots/`: each state, the maintenance lists,
-pressed and held buttons, every toast, and the start-up, setup, offline and calibration screens.
-`shots/targets/` has the same pictures with each touch target framed and measured, and
-`shots/checks.txt` lists text that was cut off and targets under 7 mm on the smallest panel
-with that resolution:
+To view a real Bambuddy printer, set `BAMBUDDY_URL` to the HTTP server address, `BAMBUDDY_KEY` to a
+read-only API key, and `BAMBUDDY_PRINTER` to the numeric printer ID in your environment. Start the
+built simulator in live mode.
 
 ```bash
-./tools/shots.sh
+.pio/build/sim/program --live
 ```
 
-All of that for every screen size a board has, plus the settings web page in each of its
-states, on one page to scroll through (`shots/index.html`):
+Live mode reads status and suppresses writes. Both modes accept a screen size, for example
+`--size 480x320`. Use hardware to check actual display colours, touch accuracy, WiFi and update
+behaviour.
 
-```bash
-./tools/shots.sh all
-```
+### Screenshots and demo
 
-The film on the [home page](index.md), again after the screens have changed (needs `ffmpeg`). It
-is a scripted tour, `run_demo` in `src/sim/sim_main.cpp`, on a clock of its own, so it comes out
-the same every time; it writes `docs/demo.gif`, and `docs/demo.mp4` and `docs/demo.webm` for
-web pages:
-
-```bash
-./tools/demo.sh
-```
-
-Another screen size, for a board that isn't 320x240. `--size` works with the window and with
-`--live` too:
-
-```bash
-./tools/shots.sh 480x320
-```
-
-```bash
-.pio/build/sim/program --size 480x320
-```
-
-A real printer, read-only (the buttons send nothing):
-
-```bash
-BAMBUDDY_URL=http://host:3700 BAMBUDDY_KEY=... BAMBUDDY_PRINTER=1 .pio/build/sim/program --live
-```
-
-The simulator shows layout, fonts, text cut-off and 16-bit colour faithfully, and runs LVGL with
-the panel's memory size and strip-by-strip drawing. It stands in for the display and touch
-drivers, the LED, HTTP (curl instead of the ESP32's client, in the window's own thread) and, in
-made-up mode, Bambuddy itself. It does not show the real panel's weaker contrast and viewing
-angle, the imprecision of resistive touch, redraw speed, the boot and setup screens' timing, or
-anything about WiFi.
+| Command | Output |
+|---|---|
+| `./tools/shots.sh` | Screens at 320×240 in `shots/`, touch target overlays in `shots/targets/` and layout findings in `shots/checks.txt` |
+| `./tools/shots.sh 480x320` | Screenshots at that size in `shots/480x320/` |
+| `./tools/shots.sh all` | Both board resolutions, settings-page examples and a gallery at `shots/index.html` |
+| `./tools/demo.sh --check` | Exercises the scripted interactions used in the walkthrough |
+| `./tools/demo.sh` | Regenerates `docs/demo.gif`, `docs/demo.mp4` and `docs/demo.webm` with FFmpeg |
 
 ## Tests
 
@@ -97,88 +66,69 @@ anything about WiFi.
 pio test -e test
 ```
 
-Covers the parts with no hardware in them: reading Bambuddy's JSON (status, queue, outcome
-question, maintenance, settings), the requests each button sends, the polling round, which
-screen and buttons each printer state gets, the text on screen, and the touch calibration maths.
+The native suite tests API parsing, command construction, polling, screen and button selection,
+spool handling, touch calibration and firmware image checks. It runs with AddressSanitizer and
+UndefinedBehaviorSanitizer.
 
-The tests run with AddressSanitizer and UBSan, so a write past the end of a text field fails
-them.
-
-CI runs the tests, builds the firmware for every board (also with updates over WiFi turned on),
-checks that `src/icons.c` and the screenshots in `docs/screenshots/` are up to date, and draws
-the screens at three more sizes (480x320, 480x272, 800x480), which shows that nothing crashes
-there and every button the screenshots press still exists. Of those sizes only the two
-pictures each that [Boards](boards.md#screen-sizes) shows are compared; the rest nobody but you
-looks at. A warning in the
-panel's own code (`src/`) fails every build; the test file itself is compiled without that.
-
-A tag like `v0.1.0` builds every board as that version and puts the firmware files and the
-license texts into a draft release (`.github/workflows/release.yml`), to be looked over and
-published by hand.
+CI builds and packages every physical profile, rebuilds the source bundle with a custom ArduinoOTA
+profile, checks generated icons, runs the simulator tour and compares screenshots with the reference
+images. The comparisons include the larger [documented screen sizes](boards.md#screen-sizes). A
+version tag such as `v0.1.0` creates a draft GitHub release with application and full images, a
+checksum list, third-party notices and a rebuildable source archive.
 
 ## This site
 
-The pages are the Markdown files in `docs/`, built with [MkDocs](https://www.mkdocs.org/) and
-[Material for MkDocs](https://squidfunk.github.io/mkdocs-material/). To look at them locally:
+Edit the Markdown pages in `docs/` and the navigation in `mkdocs.yml`. From the repository root,
+install the pinned Material for MkDocs dependency in a Python virtual environment. Preview locally
+or run the strict build used by CI.
 
 ```bash
-pip install -r requirements-docs.txt
-```
-
-```bash
+python -m pip install -r requirements-docs.txt
+mkdocs build --strict
 mkdocs serve
 ```
 
-CI builds the site with `--strict`, so a link to a page or heading that isn't there fails, and
-publishes from public `main` when GitHub Pages is configured for Actions.
+Open the local address printed by `mkdocs serve`. The
+[documentation workflow](https://github.com/loidolt/bambuddy-panel/blob/main/.github/workflows/docs.yml)
+publishes changes from public `main` to GitHub Pages.
 
 ## Pushed updates over WiFi
 
-This is for development: pushing a build from PlatformIO. To update a panel with a release, see
-[Updating](updating.md). Off unless built with a password of at least 8 characters (the build fails on a shorter one).
-Put it in `platformio_override.ini` (ignored by git, read when it is there), as a build of your
-own on top of your board's:
+Released firmware supports uploads through the settings page. To push development builds directly
+from PlatformIO, create a custom environment in `platformio_override.ini` (ignored by Git). Extend
+the profile for your physical board. Set the same private password, at least eight characters, in
+both places below.
 
 ```ini
 [env:my-panel]
 extends = env:cyd-st7789
-build_flags = ${env:cyd-st7789.build_flags} -DOTA_PASSWORD=\"change-me-please\"
+build_flags = ${env:cyd-st7789.build_flags} -DOTA_PASSWORD=\"replace-with-your-password\"
 upload_protocol = espota
 upload_port = bambuddy-panel-1.local
-upload_flags = --auth=change-me-please
+upload_flags = --auth=replace-with-your-password
 ```
 
-```bash
-pio run -e my-panel
-```
+1. Run `pio run -e my-panel`. Install `.pio/build/my-panel/firmware.bin` once through the panel’s
+   settings page. The custom build inherits the physical board identifier.
+2. Set `upload_port` to the panel’s IP address or `bambuddy-panel-<printer_id>.local`. The example
+   uses printer 1.
+3. Run `pio run -e my-panel -t upload` for subsequent uploads.
 
-Install the resulting `.pio/build/my-panel/firmware.bin` once through the existing panel’s settings page. It inherits the physical board identity from `cyd-st7789`. After reboot, set `upload_port` to the panel’s address or the hostname for its configured printer id. Subsequent `pio run -e my-panel -t upload` commands use ArduinoOTA.
+ArduinoOTA embeds the password in the firmware. The transfer is unencrypted and images are unsigned.
+Keep this build on your trusted network.
 
-The password is checked with a challenge, so it doesn't cross the network, but the firmware
-itself is neither encrypted nor signed, and the password is in the firmware file.
+## Source layout
 
-## Layout
-
-| Path | Job |
+| Area | Files |
 |---|---|
-| `src/main.cpp` | Boot, WiFi and setup portal, main loop |
-| `src/bambuddy.*` | Background task: HTTP, polls Bambuddy, sends commands |
-| `src/poller.*` | One round of reading Bambuddy; shared with the simulator and the tests |
-| `src/bambuddy_api.*` | The requests each command sends, and the wording of results |
-| `src/bambuddy_parse.*` | JSON to state |
-| `src/ui_logic.*` | Which screen and buttons each state gets, and the text on it |
-| `src/ui.cpp`, `src/ui_tasks.cpp` | Drawing: the status, message and calibration screens; the maintenance screen |
-| `src/ui_layout.cpp` | Fits the screens to the panel's size: the unit grid and the text sizes |
-| `src/display.*` | The board's drivers tied to LVGL: drawing, touch, backlight, LED |
-| `src/drivers/` | One file per panel or touch chip; the board picks |
-| `src/calibrate.*`, `src/touch_cal.*` | Touch calibration: the screen flow, and the maths |
-| `src/settings.*` | Settings kept in flash |
-| `src/setup_web.cpp`, `src/setup_page.*` | The settings page: the web server with the code check and the firmware upload; the page's text |
-| `src/fw_check.*` | Checks an uploaded firmware file: an application, and built for this board |
-| `src/icons.*` | Icons, made by `tools/make_icons.py` from the SVGs in `tools/icons/` |
-| `src/board.h` | Checks the board's description is complete |
-| `src/version.h` | The firmware's version: `dev`, or the tag a release was built from |
-| `boards/` | One file per board: chip, pins, screen size, drivers. [How to add one](https://github.com/loidolt/bambuddy-panel/blob/main/boards/README.md) |
-| `platformio.ini` | What every build shares; the simulator and test builds |
-| `src/sim/` | Desktop simulator and its made-up states |
-| `test/` | Unit tests |
+| Boot, configuration and browser setup | `src/main.cpp`, `src/settings.*`, `src/setup_web.cpp`, `src/setup_page.*`, `src/settings_http.*` |
+| HTTP requests, parsing and polling | `src/bambuddy.*`, `src/bambuddy_api.*`, `src/bambuddy_parse.*`, `src/poller.*`, `src/spools.*` |
+| Screens, controls and layout | `src/ui*.cpp`, `src/ui_logic.*` |
+| Hardware and touch calibration | `boards/`, `src/board.h`, `src/drivers/`, `src/display.*`, `src/calibrate.*`, `src/touch_cal.*` |
+| Firmware identity and upload checks | `src/version.h`, `src/fw_check.*` |
+| Simulator, tests and build profiles | `src/sim/`, `test/`, `platformio.ini` |
+
+For patches and hardware reports, see the
+[contribution guide](https://github.com/loidolt/bambuddy-panel/blob/main/CONTRIBUTING.md). The
+[board contributor guide](https://github.com/loidolt/bambuddy-panel/blob/main/boards/README.md)
+covers new profiles and drivers.
