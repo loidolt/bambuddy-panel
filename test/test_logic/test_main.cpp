@@ -262,39 +262,106 @@ static void test_queue_counts_held_and_any_model_items()
 
 // ---------------------------------------------------------------- outcome question
 
-static const char *LAST_PRINTS = R"([
-  {"id": 15, "printer_id": 1, "run_id": 26, "status": "completed", "confirm_requested": true, "user_verdict": null},
-  {"id": 16, "printer_id": 2, "run_id": 30, "status": "completed", "confirm_requested": true, "user_verdict": "good"},
-  {"id": 17, "printer_id": 3, "run_id": 31, "status": "completed", "confirm_requested": false, "user_verdict": null},
-  {"id": 18, "printer_id": 5, "run_id": 40, "status": "failed", "confirm_requested": true, "user_verdict": null},
-  {"id": 19, "printer_id": 6, "run_id": 41, "status": "printing", "confirm_requested": true, "user_verdict": null}
-])";
+// GET /print-log/?printer_id=1&limit=1 as Bambuddy 1.3.1 and 1.3.2 answer it, every field of the
+// run included: the filter has to find the few the panel reads among them.
+static const char *LAST_RUN = R"({"items": [
+  {"id": 26, "archive_id": 15, "print_name": "Benchy", "plate_id": 1, "printer_name": "X1C", "printer_id": 1,
+   "status": "completed", "started_at": "2026-11-20T08:00:00", "completed_at": "2026-11-20T09:10:00",
+   "duration_seconds": 4200, "filament_type": "PLA", "filament_color": "#FFFFFF", "filament_used_grams": 14.2,
+   "cost": 0.31, "energy_kwh": null, "energy_cost": null, "wear_cost": null, "failure_reason": null,
+   "user_verdict": null, "user_verdict_source": null, "confirm_requested": true, "duration_unmeasured": false,
+   "quantity": 1, "notes": null, "photos": null, "timelapse_path": null, "estimate_seconds": null,
+   "estimate_grams": null, "thumbnail_path": "archives/15/thumb.png", "created_by_id": 1,
+   "created_by_username": "sam", "created_at": "2026-11-20T08:00:00"}
+], "total": 212, "deleted_archive_ids": []})";
+
+// One run of printer 1, with only what the panel reads.
+static std::string last_run(const std::string &fields, const char *deleted = "[]")
+{
+  return R"({"items": [{"id": 26, "printer_id": 1, )" + fields + R"(}], "total": 1, "deleted_archive_ids": )" + deleted + "}";
+}
+
+static Snapshot last_print(const std::string &json, int printerId = 1)
+{
+  Snapshot s;
+  read(json.c_str(), last_print_filter, [&](JsonDocument &d) { parse_last_print(d, printerId, s); });
+  return s;
+}
 
 static void test_verdict_pending_only_when_asked_and_unanswered()
 {
-  Snapshot s;
-  read(LAST_PRINTS, last_print_filter, [&](JsonDocument &d) { parse_last_print(d, 1, s); });
+  Snapshot s = last_print(LAST_RUN);
+  TEST_ASSERT_TRUE(s.lastPrintKnown);
   TEST_ASSERT_TRUE(s.verdictPending);
   TEST_ASSERT_EQUAL_INT(15, s.archiveId);
   TEST_ASSERT_EQUAL_INT(26, s.runId);
 
-  read(LAST_PRINTS, last_print_filter, [&](JsonDocument &d) { parse_last_print(d, 2, s); });
-  TEST_ASSERT_FALSE(s.verdictPending); // already answered
+  s = last_print(last_run(R"("archive_id": 15, "status": "completed", "confirm_requested": true, "user_verdict": "good")"));
+  TEST_ASSERT_FALSE(s.verdictPending);    // already answered
+  TEST_ASSERT_EQUAL_INT(15, s.archiveId); // still the last print, for the plate
+  TEST_ASSERT_EQUAL_INT(26, s.runId);
 
-  read(LAST_PRINTS, last_print_filter, [&](JsonDocument &d) { parse_last_print(d, 3, s); });
+  s = last_print(last_run(R"("archive_id": 15, "status": "completed", "confirm_requested": false, "user_verdict": null)"));
   TEST_ASSERT_FALSE(s.verdictPending); // never asked
 
-  read(LAST_PRINTS, last_print_filter, [&](JsonDocument &d) { parse_last_print(d, 4, s); });
-  TEST_ASSERT_FALSE(s.verdictPending); // no print for this printer
+  // A run from before runs said whether they ask: Bambuddy falls back to the archive, the panel stays quiet.
+  s = last_print(last_run(R"("archive_id": 15, "status": "completed", "confirm_requested": null, "user_verdict": null)"));
+  TEST_ASSERT_FALSE(s.verdictPending);
+
+  s = last_print(R"({"items": [], "total": 0, "deleted_archive_ids": []})");
+  TEST_ASSERT_TRUE(s.lastPrintKnown); // the printer has not printed yet: known, and nothing to ask
+  TEST_ASSERT_FALSE(s.verdictPending);
   TEST_ASSERT_EQUAL_INT(0, s.archiveId);
+  TEST_ASSERT_EQUAL_INT(0, s.runId);
 }
 
-static void test_verdict_not_asked_for_failed_or_running_prints()
+static void test_verdict_not_asked_for_failed_or_stopped_prints()
 {
-  Snapshot s;
-  read(LAST_PRINTS, last_print_filter, [&](JsonDocument &d) { parse_last_print(d, 5, s); });
-  TEST_ASSERT_FALSE(s.verdictPending); // Bambuddy only asks about completed prints
-  read(LAST_PRINTS, last_print_filter, [&](JsonDocument &d) { parse_last_print(d, 6, s); });
+  // Bambuddy only asks about completed prints.
+  for (const char *status : {"failed", "aborted", "cancelled", "stopped", "skipped", "printing"}) {
+    std::string fields = R"("archive_id": 15, "confirm_requested": true, "user_verdict": null, "status": ")";
+    TEST_ASSERT_FALSE_MESSAGE(last_print(last_run(fields + status + "\"")).verdictPending, status);
+  }
+}
+
+// The answer goes to the archive (PATCH /archives/{id} with the run): without one there is no question.
+static void test_verdict_not_asked_without_an_archive_to_answer_to()
+{
+  const std::string asked = R"("status": "completed", "confirm_requested": true, "user_verdict": null)";
+  Snapshot s = last_print(last_run(R"("archive_id": null, )" + asked));
+  TEST_ASSERT_TRUE(s.lastPrintKnown);
+  TEST_ASSERT_FALSE(s.verdictPending);
+  TEST_ASSERT_EQUAL_INT(0, s.archiveId);
+  TEST_ASSERT_EQUAL_INT(26, s.runId);
+
+  // Deleted archives keep their runs in the log; Bambuddy names them beside the list.
+  s = last_print(last_run(R"("archive_id": 15, )" + asked, "[3, 15]"));
+  TEST_ASSERT_FALSE(s.verdictPending);
+  TEST_ASSERT_EQUAL_INT(0, s.archiveId);
+
+  s = last_print(last_run(R"("archive_id": 15, )" + asked, "[3]"));
+  TEST_ASSERT_TRUE(s.verdictPending);
+}
+
+// A Bambuddy that did not filter by printer must not have this panel ask about another printer's print.
+static void test_verdict_not_asked_for_another_printers_run()
+{
+  Snapshot s = last_print(LAST_RUN, 2);
+  TEST_ASSERT_TRUE(s.lastPrintKnown);
+  TEST_ASSERT_FALSE(s.verdictPending);
+  TEST_ASSERT_EQUAL_INT(0, s.archiveId);
+  TEST_ASSERT_EQUAL_INT(0, s.runId);
+}
+
+// What the panel read until Bambuddy began retiring the archive's copies of a run's fields
+// (GET /archives/last-per-printer), and an error body: neither is a last print.
+static void test_last_print_unknown_from_anything_but_a_run_list()
+{
+  Snapshot s = last_print(R"([{"id": 15, "printer_id": 1, "run_id": 26, "status": "completed", "confirm_requested": true, "user_verdict": null}])");
+  TEST_ASSERT_FALSE(s.lastPrintKnown);
+  TEST_ASSERT_FALSE(s.verdictPending);
+  s = last_print(R"({"detail": "Not Found"})");
+  TEST_ASSERT_FALSE(s.lastPrintKnown);
   TEST_ASSERT_FALSE(s.verdictPending);
 }
 
@@ -515,7 +582,7 @@ struct FakeBambuddy {
   std::vector<std::string> asked;
   std::string status = STATUS_FINISHED;
   int statusCode = 200;
-  std::string lastPrints = LAST_PRINTS;
+  std::string lastRun = LAST_RUN;
   std::string queue = "[]";
   std::map<std::string, int> fail; // part of a path -> the code that request gets instead of 200
 };
@@ -533,8 +600,8 @@ static int fake_fetch(const char *path, JsonDocument &doc, const JsonDocument &f
     json = b.status.c_str();
   } else if (p.find("/queue/") == 0 || p.find("/api/v1/queue/") == 0) {
     json = b.queue.c_str();
-  } else if (p.find("last-per-printer") != std::string::npos) {
-    json = b.lastPrints.c_str();
+  } else if (p.find("/print-log/") != std::string::npos) {
+    json = b.lastRun.c_str();
   } else if (p.find("/inventory/spools") != std::string::npos) {
     json = SPOOLS;
   } else if (p.find("/inventory/assignments") != std::string::npos) {
@@ -556,7 +623,7 @@ static void test_poll_round_asks_in_order()
   Snapshot s;
   poll_once(p, s, fake_fetch, &b);
   const char *expected[] = {"/api/v1/printers/1/status", "/api/v1/queue/?status=pending,skipped,printing&printer_id=1",
-                            "/api/v1/archives/last-per-printer", "/api/v1/maintenance/printers/1",
+                            "/api/v1/print-log/?printer_id=1&limit=1", "/api/v1/maintenance/printers/1",
                             "/api/v1/settings/", "/api/v1/inventory/assignments?printer_id=1"};
   TEST_ASSERT_EQUAL_size_t(6, b.asked.size()); // this printer has an AMS, so its spools are asked for
   for (int i = 0; i < 6; i++) TEST_ASSERT_EQUAL_STRING(expected[i], b.asked[i].c_str());
@@ -644,7 +711,7 @@ static void test_failed_side_requests_clear_action_targets()
   TEST_ASSERT_TRUE(s.verdictPending);
   TEST_ASSERT_TRUE(s.tasksKnown);
 
-  b.fail = {{"/queue/", 500}, {"last-per-printer", -11}};
+  b.fail = {{"/queue/", 500}, {"/print-log/", -11}};
   now = 4000;
   poll_once(p, s, fake_fetch, &b);
   TEST_ASSERT_TRUE(s.reachable);
@@ -725,7 +792,7 @@ static void test_no_outcome_question_while_a_print_is_under_way()
     s.verdictPending = true; // left over from the print before
     poll_once(p, s, fake_fetch, &b);
     TEST_ASSERT_FALSE_MESSAGE(s.verdictPending, state);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, count_asked(b, "last-per-printer"), state);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, count_asked(b, "/print-log/"), state);
   }
 }
 
@@ -765,7 +832,7 @@ static void test_poll_round_skips_outcome_while_printing()
   Snapshot s;
   s.verdictPending = true;
   poll_once(p, s, fake_fetch, &b);
-  for (auto &a : b.asked) TEST_ASSERT_EQUAL(std::string::npos, a.find("last-per-printer"));
+  for (auto &a : b.asked) TEST_ASSERT_EQUAL(std::string::npos, a.find("/print-log/"));
   TEST_ASSERT_FALSE(s.verdictPending);
 }
 
@@ -1248,7 +1315,7 @@ static void test_a_sent_job_shows_until_the_printer_takes_it_up()
 {
   FakeBambuddy b;
   b.status = R"({"name": "X1C", "connected": true, "state": "FINISH", "subtask_name": "Old_job"})"; // the last print
-  b.lastPrints = "[]";
+  b.lastRun = R"({"items": [], "total": 0, "deleted_archive_ids": []})";
   b.queue = R"([{"id": 9, "position": 1, "status": "pending", "printer_id": 1, "library_file_name": "Dragon.3mf"}])";
   Poller p;
   p.printerId = 1;
@@ -1821,7 +1888,10 @@ int main()
   RUN_TEST(test_queue_empty_clears_previous);
   RUN_TEST(test_queue_counts_held_and_any_model_items);
   RUN_TEST(test_verdict_pending_only_when_asked_and_unanswered);
-  RUN_TEST(test_verdict_not_asked_for_failed_or_running_prints);
+  RUN_TEST(test_verdict_not_asked_for_failed_or_stopped_prints);
+  RUN_TEST(test_verdict_not_asked_without_an_archive_to_answer_to);
+  RUN_TEST(test_verdict_not_asked_for_another_printers_run);
+  RUN_TEST(test_last_print_unknown_from_anything_but_a_run_list);
   RUN_TEST(test_plate_clear_setting);
   RUN_TEST(test_tasks_sorted_by_urgency);
   RUN_TEST(test_tasks_without_a_time_go_last);

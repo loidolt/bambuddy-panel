@@ -16,7 +16,7 @@ void parse_status(JsonDocument &doc, Snapshot &s); // GET /printers/{id}/status
 // GET /queue/?status=pending,skipped,printing&printer_id={id}
 void parse_queue(JsonDocument &doc, int printerId, Snapshot &s);
 void parse_tasks(JsonDocument &doc, Snapshot &s);  // GET /maintenance/printers/{id}
-void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s); // GET /archives/last-per-printer
+void parse_last_print(JsonDocument &doc, int printerId, Snapshot &s); // GET /print-log/?printer_id=&limit=1
 void parse_settings(JsonDocument &doc, Snapshot &s); // GET /settings/
 // GET /inventory/assignments?printer_id={id}
 void parse_assignments(JsonDocument &doc, int printerId, Snapshot &s);
