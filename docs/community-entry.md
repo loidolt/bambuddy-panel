@@ -21,7 +21,7 @@ An ESP32 touch panel displays one printer’s status and queue. At the printer y
 
 ## The pull request
 
-Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), four changes:
+Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), five changes:
 
 1. `docs/wiki/bambuddy-panel.md` from here goes to `docs/community/bambuddy-panel.md`. Its
    relative links (`../features/api-keys.md`, `../reference/api.md`) are written for that place.
@@ -39,4 +39,6 @@ Against [maziggy/bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki), four 
 3. A line in `mkdocs.yml` under `Community Add-ons`, after Bambutton:
    `- Bambuddy Panel: community/bambuddy-panel.md`
 4. `docs/demo.gif` from here goes to `docs/assets/bambuddy-panel-demo.gif`, where the wiki
-   keeps its images; the page shows it from there.
+   keeps its images; the page shows it from there as `../assets/...`, the way every other page
+   of the wiki does (its CONTRIBUTING.md says `/assets/...`, but no page uses that).
+5. A line in `docs/llms.txt`, next to Bambutton's, pointing at the new page.
