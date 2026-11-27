@@ -1,27 +1,45 @@
 # Security
 
-The panel is made for a home or workshop network you trust. What that means, piece by piece:
+Use the panel on a trusted local network and place it where people are allowed to operate the
+printer. Anyone at the touchscreen can use the controls permitted by its Bambuddy API key. The code
+for browser settings protects a different set of actions.
 
-- **API key.** Stored in the panel's flash, which isn't encrypted: anyone who takes the panel
-  away can read it. It travels over plain HTTP on your LAN, where anyone on that network can
-  read it too, and can then send the panel's commands (stop, pause, start) themselves or show
-  the panel a status that isn't true. Give it only the [permissions it needs](get-started.md#set-up-a-panel), limit it to one printer, and delete it in
-  Bambuddy if a panel goes missing.
-- **Setup network.** The WiFi setup portal has a 10-minute timeout and may reopen on a later setup attempt. It has a password of twelve random letters and digits, new every time and shown only on
-  the panel's screen. The extra pages of the setup library (firmware upload, erase, restart,
-  device info) are switched off.
-- **Settings page.** Open during initial setup, from the gear in Maintenance, from **Open settings**, or by touch at startup. A configured panel leaves setup after ten minutes without an authenticated Save or firmware transfer. Every change
-  needs the code shown on the panel's screen (the QR code there carries it too), so anyone who obtains the current code can make changes; a wrong code costs a second, and after ten the panel shows a new one. The page is plain
-  HTTP, so what's typed into it crosses your network as readable as the panel's own requests.
-  Opening the page with no code shows only an unlock form. The saved key is hidden, and the key is only kept for the Bambuddy URL it was saved
-  with: change the URL and it must be entered again, so nobody at the panel can have it sent
-  to a server of their own. Save commits the address, key and printer together after a valid status response. A connection or server failure allows an explicit offline save. Cancel discards pending edits.
-- **Firmware update.** The settings page takes a new firmware file, so it is open only when
-  that page is, and needs the same code: whoever can see the panel's screen can put other
-  firmware on it. The file is not signed. The panel checks that it is an application built for
-  this board, which guards against a wrong file, not against a tampered one; download it from
-  the releases yourself and compare it with `SHA256SUMS.txt` if in doubt. The upload is plain
-  HTTP like the rest of the page. The settings server caps form bodies at 4 KiB and the application file at the spare slot size. A connection has a ten-second request deadline, extended to two minutes for an authorized upload, with a three-second socket read timeout. There is no automatic way back: firmware that starts but
-  hangs needs USB to replace.
-- **Pushed updates over WiFi** (ArduinoOTA) are off unless you build them in with a password
-  ([Development](development.md#pushed-updates-over-wifi)).
+## Bambuddy API key
+
+The panel stores its API key in unencrypted flash and sends it to Bambuddy over plain HTTP. Someone
+with physical access to the flash or access to the network traffic could recover the key and use its
+permissions. The panel also relies on that network for the integrity of the status it displays.
+
+Create a dedicated key, grant only the actions needed at this printer and restrict its printer
+access where possible. Revoke the key in Bambuddy if the panel is lost or the key is exposed. See
+[Create an API key](get-started.md#create-an-api-key).
+
+## Setup access
+
+The WiFi setup network uses a new random password each time it opens. The panel displays that
+password and a QR code. The portal accepts WiFi settings and times out after ten minutes.
+
+Once on the LAN, the panel opens its settings page during initial setup or when someone
+[requests settings](get-started.md#reopen-settings). The current screen code unlocks the page and
+authorizes changes. The QR code contains it, so treat photos of either setup screen as credentials.
+After ten consecutive incorrect attempts, the panel generates a new code. A configured panel leaves
+setup after ten minutes without an authenticated save attempt or firmware upload activity.
+
+The settings page uses HTTP. It hides the saved API key and requires you to enter it again if the
+server address changes. **Save** stores the address, key and printer together after a valid status
+response. A temporary connection or server failure offers an explicit offline save. **Cancel** on
+the panel discards unsaved edits.
+
+## Firmware
+
+Anyone with access to the settings page and its current code can install firmware. The panel checks
+the application image’s format, size and board identifier. These checks catch a wrong-board file.
+Firmware is unsigned and travels over HTTP. Get release files from the panel repository and
+[verify the download](updating.md#verify-a-download).
+
+An interrupted upload leaves the existing boot slot selected. If installed firmware boots but hangs,
+[recover over USB](updating.md#recover-over-usb). PlatformIO push updates through ArduinoOTA require
+a [custom build with a password](development.md#pushed-updates-over-wifi).
+
+For a suspected vulnerability, use the
+[panel project’s private reporting instructions](https://github.com/loidolt/bambuddy-panel/blob/main/SECURITY.md).
