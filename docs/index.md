@@ -14,7 +14,7 @@ the plate is clear while you’re at the printer.
 2. [Install and set up the panel](get-started.md) with a USB data cable, WiFi and a Bambuddy API
    key.
 3. [Learn the controls](using.md) for a running print, a finished plate, a held queue or a spool
-   change. Some commands still await testing on a real printer.
+   change.
 
 You can also [try the desktop simulator](development.md#simulator) without a board.
 

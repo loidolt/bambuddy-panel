@@ -14,8 +14,7 @@ key permissions.
 
 The ESP32-2432S028R with an ST7789 display (`cyd-st7789`) has hardware test coverage for the
 display, touch calibration, backlight, WiFi and Bambuddy setup, printer status and filament slots.
-The other nine board profiles have compile checks only. Some printer commands still await end-to-end
-testing.
+The other nine board profiles have compile checks only.
 
 1. [Identify your board and display controller](docs/boards.md). The ESP32-2432S028R comes in two
    variants that use different firmware.
