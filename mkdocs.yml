@@ -2,13 +2,11 @@
 # Pages are the Markdown files in docs/. To look at it locally:
 #   pip install -r requirements-docs.txt && mkdocs serve
 site_name: Bambuddy Panel
-site_description: Documentation for an unofficial, community-maintained ESP32 touchscreen for Bambuddy
+site_description: Setup and usage guides for an ESP32 touchscreen that displays printer status and queue information from Bambuddy
 site_url: https://loidolt.github.io/bambuddy-panel/
 repo_url: https://github.com/loidolt/bambuddy-panel
 repo_name: loidolt/bambuddy-panel
 edit_uri: edit/main/docs/
-copyright: >-
-  Bambuddy Panel is an unofficial community project. Neither the Bambuddy project nor Bambu Lab maintains or endorses it.
 
 # What is in docs/ but not part of the site: working notes, and the page written for
 # Bambuddy's own wiki (its links only work there).

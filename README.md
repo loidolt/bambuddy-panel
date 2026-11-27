@@ -1,9 +1,7 @@
 # Bambuddy Panel
 
-Bambuddy Panel is unofficial, community-maintained ESP32 touchscreen firmware for
-[Bambuddy](https://github.com/maziggy/bambuddy). One panel displays one printer’s status and queue,
-and sends actions to your Bambuddy server over WiFi. Neither the Bambuddy project nor Bambu Lab
-maintains or endorses the panel.
+Bambuddy Panel shows one printer’s status and queue on an ESP32 touchscreen. It connects to your
+[Bambuddy server](https://github.com/maziggy/bambuddy) over WiFi.
 
 While a print runs, the panel shows progress, time remaining and temperatures. At the printer you
 can pause or resume a job, record a print outcome, confirm plate clearance, assign an inventory
@@ -35,8 +33,10 @@ With PlatformIO installed, run `pio test -e test` for the native tests. The desk
 SDL2 and libcurl. Start it with `pio run -e sim -t exec` to explore the screens with sample data.
 
 For build instructions, screenshots or new board profiles, see the
-[development guide](docs/development.md) and [board contributor guide](boards/README.md). Report
-panel issues in [this repository](https://github.com/loidolt/bambuddy-panel/issues/new/choose). See
+[development guide](docs/development.md) and [board contributor guide](boards/README.md).
+
+Bambuddy Panel is an independent community project. Report panel issues in
+[this repository](https://github.com/loidolt/bambuddy-panel/issues/new/choose). See
 [CONTRIBUTING.md](CONTRIBUTING.md) for patch and hardware reports and [SECURITY.md](SECURITY.md) for
 private reports.
 

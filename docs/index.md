@@ -1,9 +1,8 @@
 # Bambuddy Panel
 
-Bambuddy Panel is unofficial, community-maintained firmware for an ESP32 touchscreen beside a 3D
-printer. It gets one printer’s status and queue from your
-[Bambuddy server](https://github.com/maziggy/bambuddy) over WiFi. Neither the Bambuddy project nor
-Bambu Lab maintains or endorses the panel.
+Bambuddy Panel shows one printer’s status and queue on an ESP32 touchscreen. It connects to your
+[Bambuddy server](https://github.com/maziggy/bambuddy) over WiFi so you can pause a print or confirm
+the plate is clear while you’re at the printer.
 
 <div class="panel-overview" markdown>
 <div markdown>
@@ -32,7 +31,8 @@ You can also [try the desktop simulator](development.md#simulator) without a boa
 
 ## Help and contributions
 
-For a panel issue, start with [troubleshooting](troubleshooting.md) or
+Bambuddy Panel is an independent community project. For a panel issue, start with
+[troubleshooting](troubleshooting.md) or
 [file a panel report](https://github.com/loidolt/bambuddy-panel/issues/new/choose). For help with
 the Bambuddy server, see the [upstream documentation](https://wiki.bambuddy.cool/).
 
